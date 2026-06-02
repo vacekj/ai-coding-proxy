@@ -1,6 +1,9 @@
-# Grok Composer Claude Proxy
+# AI Coding Proxy
 
-Tiny Bun/TypeScript Anthropic Messages API proxy for Claude Code, backed by xAI OAuth and `grok-composer-2.5-fast`.
+Tiny Bun/TypeScript Anthropic Messages API proxy for Claude Code. One local server can route to:
+
+- Grok Composer via Grok CLI OAuth and `grok-composer-2.5-fast`
+- OpenCode Zen via `OPENCODE_API_KEY` and Zen model IDs such as `opencode/minimax-m3-free`
 
 ## Setup
 
@@ -24,6 +27,18 @@ export CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY=1
 claude
 ```
 
+To use OpenCode Zen from the same proxy, set Claude Code's model envs to a Zen model ID:
+
+```bash
+export ANTHROPIC_BASE_URL=http://127.0.0.1:8317
+export ANTHROPIC_MODEL=opencode/minimax-m3-free
+export ANTHROPIC_DEFAULT_SONNET_MODEL=opencode/minimax-m3-free
+export ANTHROPIC_DEFAULT_OPUS_MODEL=opencode/minimax-m3-free
+export ANTHROPIC_API_KEY=not-needed
+export ANTHROPIC_AUTH_TOKEN=not-needed
+claude
+```
+
 ## Configuration
 
 | Variable | Default | Meaning |
@@ -33,8 +48,17 @@ claude
 | `GROK_PROXY_MODEL` | `grok-composer-2.5-fast` | Upstream Grok CLI model |
 | `GROK_PROXY_BASE_URL` | `https://cli-chat-proxy.grok.com/v1` | Grok CLI API base URL |
 | `GROK_CLI_AUTH_FILE` | `~/.grok/auth.json` | Grok CLI OAuth credential file |
+| `OPENCODE_API_KEY` | unset | Optional OpenCode Zen API key for paid/keyed Zen models |
+| `OPENCODE_PROXY_MODEL` | `minimax-m3-free` | Default Zen model when `PROXY_PROVIDER=opencode` |
+| `OPENCODE_OPENAI_BASE_URL` | `https://opencode.ai/zen/v1/chat/completions` | Zen OpenAI-compatible endpoint |
+| `OPENCODE_ANTHROPIC_BASE_URL` | `https://opencode.ai/zen/v1/messages` | Zen Anthropic Messages endpoint |
+| `PROXY_PROVIDER` | unset | Set to `opencode` to route unrecognized model names to OpenCode Zen |
 
 This does not implement its own OAuth flow, inspect browser cookies, intercept OAuth traffic, accept API keys, or authenticate local proxy clients. If credentials are missing or expired, run `grok login --oauth`; the proxy only reads the token that Grok CLI stores in `~/.grok/auth.json`.
+
+OpenCode Zen is separate from Grok OAuth. The tested free model path works without a key; for paid or key-gated Zen models, use `/connect` in OpenCode, select OpenCode Zen, and copy the API key into `OPENCODE_API_KEY`.
+
+Known Zen model IDs are exposed through `GET /v1/models`. The proxy understands both `opencode/<model-id>` and raw Zen model IDs.
 
 ## Smoke test
 

@@ -181,6 +181,75 @@ export type XAIOutputItem =
       [key: string]: unknown;
     };
 
+export interface OpenAIChatRequest {
+  model: string;
+  messages: OpenAIChatMessage[];
+  max_tokens?: number;
+  max_completion_tokens?: number;
+  temperature?: number;
+  top_p?: number;
+  stop?: string[];
+  stream: false;
+  tools?: Array<{
+    type: "function";
+    function: {
+      name: string;
+      description?: string;
+      parameters?: Record<string, unknown>;
+    };
+  }>;
+  tool_choice?: unknown;
+  effort?: string;
+  [key: string]: unknown;
+}
+
+export type OpenAIChatMessage =
+  | {
+      role: "system" | "user" | "assistant";
+      content: string | Array<Record<string, unknown>> | null;
+      tool_calls?: OpenAIChatToolCall[];
+    }
+  | {
+      role: "tool";
+      tool_call_id: string;
+      content: string;
+    };
+
+export interface OpenAIChatToolCall {
+  id?: string;
+  type?: "function";
+  function?: {
+    name?: string;
+    arguments?: string;
+  };
+  index?: number;
+}
+
+export interface OpenAIChatCompletion {
+  id?: string;
+  choices?: Array<{
+    finish_reason?: string | null;
+    message?: {
+      role?: string;
+      content?: string | Array<Record<string, unknown>> | null;
+      reasoning_content?: string;
+      tool_calls?: OpenAIChatToolCall[];
+    };
+  }>;
+  usage?: {
+    prompt_tokens?: number;
+    completion_tokens?: number;
+    total_tokens?: number;
+    prompt_tokens_details?: {
+      cached_tokens?: number;
+      cache_creation?: number;
+    };
+    completion_tokens_details?: {
+      reasoning_tokens?: number;
+    };
+  };
+}
+
 export interface OAuthTokenFile {
   type: "xai";
   auth_kind: "oauth";

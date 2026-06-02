@@ -3,6 +3,13 @@ import {
   xaiResponseToAnthropicMessage,
 } from "./anthropic-stream";
 import { serverHost, serverPort, upstreamModel } from "./config";
+import {
+  defaultOpenCodeModel,
+  fetchOpenCodeMessage,
+  isOpenCodeModel,
+  openCodeModels,
+  resolveOpenCodeModel,
+} from "./opencode";
 import { estimateAnthropicInputTokens, anthropicToResponses } from "./translate";
 import type { AnthropicMessageRequest } from "./types";
 import { fetchXAIResponses, makeSessionId } from "./xai";
@@ -19,7 +26,12 @@ const server = Bun.serve({
 
       if (request.method === "OPTIONS") return new Response(null, { status: 204 });
       if (url.pathname === "/health") {
-        return json({ ok: true, model: upstreamModel() });
+        return json({
+          ok: true,
+          default_provider: "grok",
+          grok_model: upstreamModel(),
+          opencode_model: defaultOpenCodeModel().id,
+        });
       }
 
       if (request.method === "GET" && url.pathname === "/v1/models") {
@@ -35,7 +47,10 @@ const server = Bun.serve({
         return json({ input_tokens: estimateAnthropicInputTokens(body) });
       }
 
-      if (request.method === "POST" && url.pathname === "/v1/messages") {
+      if (
+        request.method === "POST" &&
+        (url.pathname === "/v1/messages" || url.pathname === "/anthropic/v1/messages")
+      ) {
         return handleMessages(request);
       }
 
@@ -47,6 +62,10 @@ const server = Bun.serve({
         { status: 404 },
       );
     } catch (error) {
+      const status =
+        error && typeof error === "object" && "status" in error && typeof error.status === "number"
+          ? error.status
+          : 500;
       return json(
         {
           type: "error",
@@ -55,7 +74,7 @@ const server = Bun.serve({
             message: error instanceof Error ? error.message : String(error),
           },
         },
-        { status: 500 },
+        { status },
       );
     }
   },
@@ -63,9 +82,24 @@ const server = Bun.serve({
 
 console.log(`Grok Composer Claude proxy listening on http://${host}:${server.port}`);
 console.log(`Using Grok CLI credentials from ~/.grok/auth.json and model ${upstreamModel()}`);
+console.log(`OpenCode Zen models are available in the same server; default ${defaultOpenCodeModel().id}`);
 
 async function handleMessages(request: Request): Promise<Response> {
   const body = (await request.json()) as AnthropicMessageRequest;
+  if (shouldUseOpenCode(body.model)) {
+    const messagePromise = fetchOpenCodeMessage(body, { signal: request.signal });
+    if (body.stream) {
+      return new Response(anthropicMessageToSSEStream(messagePromise), {
+        headers: {
+          "Content-Type": "text/event-stream; charset=utf-8",
+          "Cache-Control": "no-cache",
+          Connection: "keep-alive",
+        },
+      });
+    }
+    return json(await messagePromise);
+  }
+
   const translation = anthropicToResponses(body);
   const sessionId = requestSessionId(request);
 
@@ -119,22 +153,39 @@ function json(value: unknown, init: ResponseInit = {}): Response {
 }
 
 function modelsList() {
-  const model = modelDetails(upstreamModel());
+  const grokModel = modelDetails(upstreamModel());
+  const opencodeModels = openCodeModels().map((model) => modelDetails(`opencode/${model.id}`));
+  const data = [grokModel, ...opencodeModels];
   return {
-    data: [model],
+    data,
     has_more: false,
-    first_id: model.id,
-    last_id: model.id,
+    first_id: data[0]?.id ?? upstreamModel(),
+    last_id: data.at(-1)?.id ?? upstreamModel(),
   };
 }
 
 function modelDetails(id: string) {
+  const opencode = resolveOpenCodeModel(id);
+  if (opencode) {
+    return {
+      id: id || `opencode/${opencode.id}`,
+      type: "model",
+      display_name: opencode.displayName,
+      created_at: "2026-06-02T00:00:00Z",
+    };
+  }
+
   return {
     id: id || upstreamModel(),
     type: "model",
     display_name: "Composer 2.5 Fast",
     created_at: "2026-06-02T00:00:00Z",
   };
+}
+
+function shouldUseOpenCode(model: string | undefined): boolean {
+  if (model && isOpenCodeModel(model)) return true;
+  return process.env.PROXY_PROVIDER?.toLowerCase() === "opencode";
 }
 
 export { server };

@@ -127,6 +127,59 @@ describe("live Grok Composer proxy", () => {
   }, TEST_TIMEOUT_MS);
 });
 
+describe("live OpenCode Zen proxy", () => {
+  const zenModel = process.env.LIVE_OPENCODE_MODEL ?? "opencode/minimax-m3-free";
+
+  it("handles a real OpenCode Zen free-model text response", async () => {
+    const expected = `zen-live-proxy-${crypto.randomUUID().slice(0, 8)}`;
+    const response = await proxyMessages({
+      model: zenModel,
+      max_tokens: 64,
+      messages: [{ role: "user", content: `Reply exactly: ${expected}` }],
+    });
+
+    expect(anthropicText(response.content ?? []).trim()).toBe(expected);
+  }, TEST_TIMEOUT_MS);
+
+  it("translates a real OpenCode Zen tool call and handles a real tool_result round trip", async () => {
+    const first = await proxyMessages({
+      model: zenModel,
+      max_tokens: 128,
+      tool_choice: { type: "tool", name: "Bash" },
+      tools: [bashAnthropicTool()],
+      messages: [{ role: "user", content: "Use the Bash tool to run pwd." }],
+    });
+
+    const toolUse = anthropicToolUses(first.content ?? [])[0];
+    expect(toolUse?.name).toBe("Bash");
+    expect(String(toolUse?.input?.command)).toContain("pwd");
+
+    const pwdOutput = await runRealPwd();
+    const expected = `zen-ok-${crypto.randomUUID().slice(0, 4)}`;
+    const second = await proxyMessages({
+      model: zenModel,
+      max_tokens: 256,
+      tool_choice: { type: "none" },
+      tools: [bashAnthropicTool()],
+      messages: [
+        {
+          role: "user",
+          content: `Use the Bash tool to run pwd, then after the result reply exactly: ${expected}`,
+        },
+        { role: "assistant", content: [toolUse] },
+        {
+          role: "user",
+          content: [{ type: "tool_result", tool_use_id: toolUse.id, content: pwdOutput }],
+        },
+        { role: "user", content: `The tool result is above. Reply exactly: ${expected}` },
+      ],
+    });
+
+    expect(anthropicToolUses(second.content ?? [])).toHaveLength(0);
+    expect(anthropicText(second.content ?? []).trim()).toBe(expected);
+  }, TEST_TIMEOUT_MS);
+});
+
 async function directXAIResponses(body: Record<string, unknown>): Promise<XAIResponse> {
   const sessionId = makeSessionId();
   const response = await fetch(`${apiBaseUrl()}/responses`, {

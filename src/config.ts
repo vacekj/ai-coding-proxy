@@ -5,6 +5,8 @@ export const XAI_CLIENT_ID = "b1a00492-073a-47ea-816f-4c329264a828";
 export const XAI_SCOPE = "openid profile email offline_access grok-cli:access api:access";
 export const XAI_DISCOVERY_URL = "https://auth.x.ai/.well-known/openid-configuration";
 export const GROK_CLI_DEFAULT_API_BASE_URL = "https://cli-chat-proxy.grok.com/v1";
+export const OPENCODE_ZEN_OPENAI_BASE_URL = "https://opencode.ai/zen/v1/chat/completions";
+export const OPENCODE_ZEN_ANTHROPIC_BASE_URL = "https://opencode.ai/zen/v1/messages";
 export const XAI_REDIRECT_HOST = "127.0.0.1";
 export const XAI_REDIRECT_PATH = "/callback";
 export const XAI_CALLBACK_PORT = 56121;
@@ -22,6 +24,22 @@ export function grokCliAuthFilePath(): string {
 
 export function upstreamModel(): string {
   return process.env.GROK_PROXY_MODEL ?? "grok-composer-2.5-fast";
+}
+
+export function opencodeDefaultModel(): string {
+  return process.env.OPENCODE_PROXY_MODEL ?? "minimax-m3-free";
+}
+
+export function opencodeApiKey(): string | undefined {
+  return process.env.OPENCODE_API_KEY?.trim() || undefined;
+}
+
+export function opencodeOpenAIBaseUrl(): string {
+  return (process.env.OPENCODE_OPENAI_BASE_URL ?? OPENCODE_ZEN_OPENAI_BASE_URL).replace(/\/+$/, "");
+}
+
+export function opencodeAnthropicBaseUrl(): string {
+  return (process.env.OPENCODE_ANTHROPIC_BASE_URL ?? OPENCODE_ZEN_ANTHROPIC_BASE_URL).replace(/\/+$/, "");
 }
 
 export function apiBaseUrl(): string {
