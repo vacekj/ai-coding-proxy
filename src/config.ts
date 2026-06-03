@@ -64,6 +64,26 @@ export function serverPort(): number {
   return port;
 }
 
+export function maxToolResultChars(): number {
+  return positiveIntEnv("PROXY_MAX_TOOL_RESULT_CHARS", 24_000);
+}
+
+export function maxRequestChars(): number {
+  return positiveIntEnv("PROXY_MAX_REQUEST_CHARS", 200_000);
+}
+
+export function compactedToolResultChars(): number {
+  return positiveIntEnv("PROXY_COMPACTED_TOOL_RESULT_CHARS", 4_000);
+}
+
+export function serverIdleTimeoutSeconds(): number {
+  return positiveIntEnv("PROXY_IDLE_TIMEOUT_SECONDS", 255);
+}
+
+export function streamPingMs(): number {
+  return positiveIntEnv("PROXY_STREAM_PING_MS", 4_000);
+}
+
 export function oauthCallbackPort(): number {
   const raw = process.env.XAI_OAUTH_CALLBACK_PORT ?? String(XAI_CALLBACK_PORT);
   const port = Number.parseInt(raw, 10);
@@ -71,4 +91,14 @@ export function oauthCallbackPort(): number {
     throw new Error(`Invalid XAI_OAUTH_CALLBACK_PORT: ${raw}`);
   }
   return port;
+}
+
+function positiveIntEnv(name: string, fallback: number): number {
+  const raw = process.env[name];
+  if (raw == null || raw.trim() === "") return fallback;
+  const value = Number.parseInt(raw, 10);
+  if (!Number.isFinite(value) || value <= 0) {
+    throw new Error(`Invalid ${name}: ${raw}`);
+  }
+  return value;
 }

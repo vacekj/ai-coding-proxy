@@ -2,7 +2,16 @@ import {
   anthropicMessageToSSEStream,
   xaiResponseToAnthropicMessage,
 } from "./anthropic-stream";
-import { serverHost, serverPort, upstreamModel } from "./config";
+import {
+  compactedToolResultChars,
+  maxRequestChars,
+  maxToolResultChars,
+  serverIdleTimeoutSeconds,
+  serverHost,
+  serverPort,
+  streamPingMs,
+  upstreamModel,
+} from "./config";
 import {
   defaultOpenCodeModel,
   fetchOpenCodeMessage,
@@ -11,6 +20,7 @@ import {
   resolveOpenCodeModel,
 } from "./opencode";
 import { estimateAnthropicInputTokens, anthropicToResponses } from "./translate";
+import { sanitizeAnthropicRequest } from "./sanitize";
 import type { AnthropicMessageRequest } from "./types";
 import { fetchXAIResponses, makeSessionId } from "./xai";
 
@@ -20,6 +30,7 @@ const port = serverPort();
 const server = Bun.serve({
   hostname: host,
   port,
+  idleTimeout: serverIdleTimeoutSeconds(),
   async fetch(request) {
     try {
       const url = new URL(request.url);
@@ -31,6 +42,11 @@ const server = Bun.serve({
           default_provider: "grok",
           grok_model: upstreamModel(),
           opencode_model: defaultOpenCodeModel().id,
+          max_tool_result_chars: maxToolResultChars(),
+          max_request_chars: maxRequestChars(),
+          compacted_tool_result_chars: compactedToolResultChars(),
+          idle_timeout_seconds: serverIdleTimeoutSeconds(),
+          stream_ping_ms: streamPingMs(),
         });
       }
 
@@ -44,7 +60,12 @@ const server = Bun.serve({
 
       if (request.method === "POST" && url.pathname === "/v1/messages/count_tokens") {
         const body = (await request.json()) as AnthropicMessageRequest;
-        return json({ input_tokens: estimateAnthropicInputTokens(body) });
+        const sanitized = sanitizeAnthropicRequest(body);
+        return json({
+          input_tokens: estimateAnthropicInputTokens(sanitized.request),
+          original_input_tokens: estimateAnthropicInputTokens(body),
+          sanitized: sanitizeStatsForResponse(sanitized.stats),
+        });
       }
 
       if (
@@ -85,7 +106,10 @@ console.log(`Using Grok CLI credentials from ~/.grok/auth.json and model ${upstr
 console.log(`OpenCode Zen models are available in the same server; default ${defaultOpenCodeModel().id}`);
 
 async function handleMessages(request: Request): Promise<Response> {
-  const body = (await request.json()) as AnthropicMessageRequest;
+  const rawBody = (await request.json()) as AnthropicMessageRequest;
+  const { request: body, stats } = sanitizeAnthropicRequest(rawBody);
+  logSanitization(stats);
+
   if (shouldUseOpenCode(body.model)) {
     const messagePromise = fetchOpenCodeMessage(body, { signal: request.signal });
     if (body.stream) {
@@ -140,6 +164,27 @@ function requestSessionId(request: Request): string {
       request.headers.get("anthropic-session-id") ??
       undefined,
   );
+}
+
+function logSanitization(stats: ReturnType<typeof sanitizeAnthropicRequest>["stats"]): void {
+  if (stats.truncatedToolResults === 0 && stats.compactedToolResults === 0) return;
+  console.warn(
+    [
+      "Sanitized oversized Anthropic request:",
+      `${stats.originalChars} chars -> ${stats.sanitizedChars} chars,`,
+      `${stats.truncatedToolResults} tool_result(s) truncated,`,
+      `${stats.compactedToolResults} tool_result(s) compacted`,
+    ].join(" "),
+  );
+}
+
+function sanitizeStatsForResponse(stats: ReturnType<typeof sanitizeAnthropicRequest>["stats"]) {
+  return {
+    truncated_tool_results: stats.truncatedToolResults,
+    compacted_tool_results: stats.compactedToolResults,
+    original_chars: stats.originalChars,
+    sanitized_chars: stats.sanitizedChars,
+  };
 }
 
 function json(value: unknown, init: ResponseInit = {}): Response {

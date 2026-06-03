@@ -1,4 +1,5 @@
 import { encodeSSE, parseSSE } from "./sse";
+import { streamPingMs } from "./config";
 import type { AnthropicContentBlock, XAIOutputItem, XAIResponse, XAIStreamEvent } from "./types";
 import {
   type AnthropicMessage,
@@ -68,9 +69,14 @@ export function anthropicMessageToSSEStream(messagePromise: Promise<AnthropicMes
   const encoder = new TextEncoder();
   return new ReadableStream({
     async start(controller) {
+      let closed = false;
       const send = (event: string, data: unknown) => {
+        if (closed) return;
         controller.enqueue(encoder.encode(encodeSSE(event, data)));
       };
+      const pingInterval = setInterval(() => {
+        send("ping", { type: "ping" });
+      }, streamPingMs());
 
       try {
         const message = await messagePromise;
@@ -105,6 +111,8 @@ export function anthropicMessageToSSEStream(messagePromise: Promise<AnthropicMes
           usage: { output_tokens: message.usage.output_tokens },
         });
         send("message_stop", { type: "message_stop" });
+        closed = true;
+        clearInterval(pingInterval);
         controller.close();
       } catch (error) {
         send("error", {
@@ -114,6 +122,8 @@ export function anthropicMessageToSSEStream(messagePromise: Promise<AnthropicMes
             message: error instanceof Error ? error.message : String(error),
           },
         });
+        closed = true;
+        clearInterval(pingInterval);
         controller.close();
       }
     },
