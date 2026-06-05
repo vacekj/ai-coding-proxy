@@ -67,14 +67,30 @@ export async function xaiResponseToAnthropicMessage(
 
 export function anthropicMessageToSSEStream(messagePromise: Promise<AnthropicMessage>): ReadableStream<Uint8Array> {
   const encoder = new TextEncoder();
+  let closed = false;
+  let pingInterval: ReturnType<typeof setInterval> | undefined;
+
+  const stop = () => {
+    closed = true;
+    if (pingInterval !== undefined) {
+      clearInterval(pingInterval);
+      pingInterval = undefined;
+    }
+  };
+
   return new ReadableStream({
     async start(controller) {
-      let closed = false;
       const send = (event: string, data: unknown) => {
         if (closed) return;
-        controller.enqueue(encoder.encode(encodeSSE(event, data)));
+        try {
+          controller.enqueue(encoder.encode(encodeSSE(event, data)));
+        } catch {
+          // Downstream consumer disconnected; stop emitting so the ping
+          // interval can't throw on a closed controller and crash the process.
+          stop();
+        }
       };
-      const pingInterval = setInterval(() => {
+      pingInterval = setInterval(() => {
         send("ping", { type: "ping" });
       }, streamPingMs());
 
@@ -111,9 +127,6 @@ export function anthropicMessageToSSEStream(messagePromise: Promise<AnthropicMes
           usage: { output_tokens: message.usage.output_tokens },
         });
         send("message_stop", { type: "message_stop" });
-        closed = true;
-        clearInterval(pingInterval);
-        controller.close();
       } catch (error) {
         send("error", {
           type: "error",
@@ -122,10 +135,17 @@ export function anthropicMessageToSSEStream(messagePromise: Promise<AnthropicMes
             message: error instanceof Error ? error.message : String(error),
           },
         });
-        closed = true;
-        clearInterval(pingInterval);
-        controller.close();
+      } finally {
+        stop();
+        try {
+          controller.close();
+        } catch {
+          // Stream already closed (consumer disconnected or cancelled).
+        }
       }
+    },
+    cancel() {
+      stop();
     },
   });
 }
