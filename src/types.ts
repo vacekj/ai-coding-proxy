@@ -200,6 +200,7 @@ export interface OpenAIChatRequest {
   }>;
   tool_choice?: unknown;
   effort?: string;
+  reasoning_effort?: string;
   [key: string]: unknown;
 }
 

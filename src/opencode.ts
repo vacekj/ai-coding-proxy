@@ -287,8 +287,11 @@ function anthropicToOpenAI(
   if (input.top_p != null) body.top_p = input.top_p;
   if (input.stop_sequences?.length) body.stop = input.stop_sequences;
 
-  const effort = effortFromAnthropic(input);
-  if (effort) body.effort = effort;
+  const effort = effortFromAnthropic(input, modelConfig);
+  if (effort) {
+    if (isDeepSeekV4(modelConfig)) body.reasoning_effort = effort;
+    else body.effort = effort;
+  }
   if (input.thinking?.budget_tokens) body.max_completion_tokens = input.thinking.budget_tokens;
 
   if (input.tools?.length) {
@@ -448,15 +451,54 @@ function extractText(content: unknown): string {
   return JSON.stringify(content);
 }
 
-function effortFromAnthropic(input: AnthropicMessageRequest): string | undefined {
-  const value =
-    input.output_config?.effort ??
-    (input.thinking?.type && input.thinking.type !== "disabled" ? input.thinking.type : undefined);
-  if (!value) return undefined;
-  const normalized = value.toLowerCase();
-  if (normalized === "adaptive" || normalized === "auto") return "high";
-  if (normalized === "low" || normalized === "medium" || normalized === "high") return normalized;
-  return undefined;
+function effortFromAnthropic(
+  input: AnthropicMessageRequest,
+  modelConfig: OpenCodeModelConfig,
+): string | undefined {
+  if (isDeepSeekV4(modelConfig)) return deepSeekV4EffortFromAnthropic(input);
+
+  const explicit = input.output_config?.effort?.toLowerCase();
+  if (explicit) return clampGenericEffort(explicit);
+
+  const thinking = input.thinking;
+  if (!thinking || thinking.type === "disabled") return undefined;
+  if (thinking.type === "adaptive" || thinking.type === "auto") return "high";
+  const budget = thinking.budget_tokens ?? 0;
+  if (budget >= 24_000) return "high";
+  if (budget >= 8_000) return "medium";
+  return "low";
+}
+
+function deepSeekV4EffortFromAnthropic(input: AnthropicMessageRequest): string | undefined {
+  const explicit = input.output_config?.effort?.toLowerCase();
+  if (explicit) return clampDeepSeekV4Effort(explicit);
+
+  const thinking = input.thinking;
+  if (!thinking) return undefined;
+  if (thinking.type === "disabled") return "none";
+  if (thinking.type === "max" || thinking.type === "xhigh") return "max";
+  if ((thinking.budget_tokens ?? 0) >= 24_000) return "max";
+  return "high";
+}
+
+function clampDeepSeekV4Effort(value: string): string {
+  if (value === "none" || value === "minimal") return "none";
+  if (value === "max" || value === "xhigh") return "max";
+  if (value === "low" || value === "medium" || value === "high" || value === "adaptive" || value === "auto") {
+    return "high";
+  }
+  return "high";
+}
+
+function clampGenericEffort(value: string): string {
+  if (value === "none" || value === "minimal") return "low";
+  if (value === "xhigh" || value === "max") return "high";
+  if (value === "low" || value === "medium" || value === "high") return value;
+  return "medium";
+}
+
+function isDeepSeekV4(modelConfig: OpenCodeModelConfig): boolean {
+  return modelConfig.id.startsWith("deepseek-v4-");
 }
 
 function parseToolArguments(raw: unknown): Record<string, unknown> {

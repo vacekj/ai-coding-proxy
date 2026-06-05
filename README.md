@@ -1,19 +1,36 @@
 # AI Coding Proxy
 
-Tiny Bun/TypeScript Anthropic Messages API proxy for Claude Code. One local server can route to:
+A tiny Bun/TypeScript Anthropic Messages API proxy for Claude Code.
 
-- Grok Composer via Grok CLI OAuth and `grok-composer-2.5-fast`
-- OpenCode Zen via `OPENCODE_API_KEY` and Zen model IDs such as `opencode/minimax-m3-free`
+It lets one local Claude Code-compatible server route requests to:
 
-## Setup
+- Grok Composer through Grok CLI OAuth, using `grok-composer-2.5-fast`
+- OpenCode Zen through Zen model IDs such as `opencode/minimax-m3-free`
+
+The proxy does not accept API keys from local clients and does not implement its own OAuth flow. For Grok, it only reads the token created by `grok login --oauth`.
+
+## Quick Start
+
+Requirements:
+
+- [Bun](https://bun.sh/)
+- [Claude Code](https://docs.anthropic.com/en/docs/claude-code/overview)
+- Grok CLI, if you want Grok Composer
+
+Install dependencies and log in to Grok:
 
 ```bash
 bun install
-grok login --oauth
+bun run login
+```
+
+Start the local proxy:
+
+```bash
 bun run start
 ```
 
-Then launch Claude Code with:
+In another terminal, point Claude Code at the proxy:
 
 ```bash
 export ANTHROPIC_BASE_URL=http://127.0.0.1:8317
@@ -27,7 +44,11 @@ export CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY=1
 claude
 ```
 
-To use OpenCode Zen from the same proxy, set Claude Code's model envs to a Zen model ID:
+That is the normal happy path.
+
+## OpenCode Zen
+
+OpenCode Zen models are available from the same local server. Use an `opencode/` model ID in Claude Code:
 
 ```bash
 export ANTHROPIC_BASE_URL=http://127.0.0.1:8317
@@ -39,12 +60,34 @@ export ANTHROPIC_AUTH_TOKEN=not-needed
 claude
 ```
 
+The tested free Zen model path works without a key. For paid or key-gated Zen models, use `/connect` in OpenCode, select OpenCode Zen, and set:
+
+```bash
+export OPENCODE_API_KEY=...
+```
+
+Known Zen model IDs are exposed through:
+
+```bash
+curl http://127.0.0.1:8317/v1/models
+```
+
+The proxy accepts both `opencode/<model-id>` and raw Zen model IDs.
+
 ## Configuration
+
+Copy `.env.example` if you want a local starting point:
+
+```bash
+cp .env.example .env
+```
+
+The app reads environment variables directly; use your shell, direnv, or another dotenv loader.
 
 | Variable | Default | Meaning |
 | --- | --- | --- |
-| `PORT` | `8317` | Local HTTP port |
 | `HOST` | `127.0.0.1` | Local bind host |
+| `PORT` | `8317` | Local HTTP port |
 | `GROK_PROXY_MODEL` | `grok-composer-2.5-fast` | Upstream Grok CLI model |
 | `GROK_PROXY_BASE_URL` | `https://cli-chat-proxy.grok.com/v1` | Grok CLI API base URL |
 | `GROK_CLI_AUTH_FILE` | `~/.grok/auth.json` | Grok CLI OAuth credential file |
@@ -53,19 +96,13 @@ claude
 | `OPENCODE_OPENAI_BASE_URL` | `https://opencode.ai/zen/v1/chat/completions` | Zen OpenAI-compatible endpoint |
 | `OPENCODE_ANTHROPIC_BASE_URL` | `https://opencode.ai/zen/v1/messages` | Zen Anthropic Messages endpoint |
 | `PROXY_PROVIDER` | unset | Set to `opencode` to route unrecognized model names to OpenCode Zen |
-| `PROXY_MAX_TOOL_RESULT_CHARS` | `24000` | Max characters forwarded from a single `tool_result` block before preserving head/tail and inserting a truncation notice |
-| `PROXY_MAX_REQUEST_CHARS` | `200000` | Approximate serialized Anthropic request budget; if exceeded, older tool results are compacted harder |
+| `PROXY_MAX_TOOL_RESULT_CHARS` | `24000` | Max characters kept from a single `tool_result` before head/tail truncation |
+| `PROXY_MAX_REQUEST_CHARS` | `200000` | Approximate serialized Anthropic request budget before older tool results are compacted harder |
 | `PROXY_COMPACTED_TOOL_RESULT_CHARS` | `4000` | Max characters kept for older tool results during whole-request compaction |
-| `PROXY_IDLE_TIMEOUT_SECONDS` | `255` | Bun server idle timeout. Raised above Bun's 10s default so long upstream requests are not cut off early |
-| `PROXY_STREAM_PING_MS` | `4000` | Interval for Anthropic SSE `ping` events while the proxy waits for a non-streaming upstream response |
+| `PROXY_IDLE_TIMEOUT_SECONDS` | `255` | Bun server idle timeout for long upstream requests |
+| `PROXY_STREAM_PING_MS` | `4000` | Anthropic SSE `ping` interval while waiting for non-streaming upstream responses |
 
-This does not implement its own OAuth flow, inspect browser cookies, intercept OAuth traffic, accept API keys, or authenticate local proxy clients. If credentials are missing or expired, run `grok login --oauth`; the proxy only reads the token that Grok CLI stores in `~/.grok/auth.json`.
-
-OpenCode Zen is separate from Grok OAuth. The tested free model path works without a key; for paid or key-gated Zen models, use `/connect` in OpenCode, select OpenCode Zen, and copy the API key into `OPENCODE_API_KEY`.
-
-Known Zen model IDs are exposed through `GET /v1/models`. The proxy understands both `opencode/<model-id>` and raw Zen model IDs.
-
-For smaller-context models such as `opencode/deepseek-v4-flash-free`, keep the request budget conservative. The defaults are designed to prevent giant fetch/read outputs from being replayed verbatim on every turn. If you still see upstream `ECONNRESET` failures after huge tool results, lower `PROXY_MAX_REQUEST_CHARS`, for example:
+For smaller-context Zen models such as `opencode/deepseek-v4-flash-free`, keep the request budget conservative. If huge tool results cause upstream `ECONNRESET` failures, try:
 
 ```bash
 export PROXY_MAX_REQUEST_CHARS=120000
@@ -73,22 +110,40 @@ export PROXY_MAX_TOOL_RESULT_CHARS=12000
 export PROXY_COMPACTED_TOOL_RESULT_CHARS=2000
 ```
 
-For long OpenCode Zen turns, the proxy keeps Anthropic streaming responses alive with SSE pings while Zen finishes a non-streaming response. If a client or network path still closes long requests, increase `PROXY_IDLE_TIMEOUT_SECONDS` or lower `PROXY_STREAM_PING_MS`.
+For DeepSeek V4 models, Claude Code effort is translated to DeepSeek `reasoning_effort`: `none`/`minimal`/disabled thinking becomes `none`, normal Claude `low`/`medium`/`high`/adaptive thinking becomes `high`, and `max`/`xhigh` or very large thinking budgets become `max`.
 
-## Smoke test
+If a client or network path closes long streaming requests, increase `PROXY_IDLE_TIMEOUT_SECONDS` or lower `PROXY_STREAM_PING_MS`.
 
-With the proxy running:
+## Local Endpoints
+
+- `GET /health` returns current proxy settings.
+- `GET /v1/models` lists Grok and known OpenCode Zen model IDs.
+- `POST /v1/messages` handles Anthropic-compatible message requests.
+- `POST /anthropic/v1/messages` is an alias for clients that include the Anthropic prefix.
+- `POST /v1/messages/count_tokens` returns the proxy's rough token estimate and sanitization stats.
+
+## Checks
+
+Fast local checks:
 
 ```bash
-bun run smoke
-```
-
-The smoke test loads the Grok CLI token from `~/.grok/auth.json`, sends one direct request to the Grok CLI Responses API, then sends one request through the local Anthropic-compatible proxy.
-
-## Tests
-
-```bash
+bun run typecheck
 bun test
 ```
 
-The test suite uses no mocks or fixture responses. It loads the real Grok CLI OAuth token, sends real requests to the Grok CLI Responses API, starts a real local proxy on port `8329`, verifies the unauthenticated Anthropic-compatible response path, asks Composer for a real tool call, executes `pwd`, and feeds the real tool result back through the proxy.
+Live checks against real upstream services:
+
+```bash
+bun run smoke
+bun run test:live
+```
+
+`bun run smoke` expects the proxy to already be running. It loads the Grok CLI token from `~/.grok/auth.json`, sends one direct request to the Grok CLI Responses API, then sends one request through the local Anthropic-compatible proxy.
+
+`bun run test:live` starts a local proxy on port `8329`, sends real requests to Grok Composer and OpenCode Zen, asks for real tool calls, executes `pwd`, and feeds the real tool result back through the proxy.
+
+## Notes
+
+- Grok credentials are separate from OpenCode Zen credentials.
+- If Grok credentials are missing or expired, run `bun run login`.
+- Local proxy clients are unauthenticated, so keep the default `HOST=127.0.0.1` unless you intentionally want to expose it.

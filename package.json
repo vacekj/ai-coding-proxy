@@ -1,6 +1,8 @@
 {
-  "name": "grok-composer-claude-proxy",
+  "name": "ai-coding-proxy",
   "version": "0.1.0",
+  "description": "Local Anthropic Messages API proxy for Claude Code, Grok Composer, and OpenCode Zen.",
+  "license": "MIT",
   "private": true,
   "type": "module",
   "scripts": {
@@ -9,6 +11,7 @@
     "login": "grok login --oauth",
     "smoke": "bun run scripts/smoke.ts",
     "test": "bun test",
+    "test:live": "bun test ./test/live.live.ts",
     "typecheck": "bunx tsc --noEmit"
   },
   "devDependencies": {

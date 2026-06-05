@@ -56,12 +56,7 @@ export function serverHost(): string {
 }
 
 export function serverPort(): number {
-  const raw = process.env.PORT ?? "8317";
-  const port = Number.parseInt(raw, 10);
-  if (!Number.isFinite(port) || port <= 0 || port > 65535) {
-    throw new Error(`Invalid PORT: ${raw}`);
-  }
-  return port;
+  return portEnv("PORT", 8317);
 }
 
 export function maxToolResultChars(): number {
@@ -85,10 +80,14 @@ export function streamPingMs(): number {
 }
 
 export function oauthCallbackPort(): number {
-  const raw = process.env.XAI_OAUTH_CALLBACK_PORT ?? String(XAI_CALLBACK_PORT);
+  return portEnv("XAI_OAUTH_CALLBACK_PORT", XAI_CALLBACK_PORT);
+}
+
+function portEnv(name: string, fallback: number): number {
+  const raw = process.env[name] ?? String(fallback);
   const port = Number.parseInt(raw, 10);
   if (!Number.isFinite(port) || port <= 0 || port > 65535) {
-    throw new Error(`Invalid XAI_OAUTH_CALLBACK_PORT: ${raw}`);
+    throw new Error(`Invalid ${name}: ${raw}`);
   }
   return port;
 }
