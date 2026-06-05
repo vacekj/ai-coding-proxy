@@ -55,6 +55,7 @@ const OPENAI_MODELS = [
   "minimax-m2.5",
   "mimo-v2.5-free",
   "nemotron-3-super-free",
+  "nemotron-3-ultra-free",
 ];
 
 const ANTHROPIC_MODELS = [
