@@ -101,7 +101,7 @@ const server = Bun.serve({
   },
 });
 
-console.log(`Grok Composer Claude proxy listening on http://${host}:${server.port}`);
+console.log(`AI Coding Proxy listening on http://${host}:${server.port}`);
 console.log(`Using Grok CLI credentials from ~/.grok/auth.json and model ${upstreamModel()}`);
 console.log(`OpenCode Zen models are available in the same server; default ${defaultOpenCodeModel().id}`);
 

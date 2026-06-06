@@ -1,13 +1,27 @@
 # AI Coding Proxy
 
-A tiny Bun/TypeScript Anthropic Messages API proxy for Claude Code.
+[![CI](https://github.com/vacekj/ai-coding-proxy/actions/workflows/ci.yml/badge.svg)](https://github.com/vacekj/ai-coding-proxy/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](./LICENSE)
 
-It lets one local Claude Code-compatible server route requests to:
+A tiny Bun/TypeScript Anthropic Messages API proxy for Claude Code. Run one local server and route requests to either upstream — without giving Claude Code an API key.
 
-- Grok Composer through Grok CLI OAuth, using `grok-composer-2.5-fast`
-- OpenCode Zen through Zen model IDs such as `opencode/minimax-m3-free`
+It supports:
+
+- **Grok Composer** through Grok CLI OAuth, using `grok-composer-2.5-fast`
+- **OpenCode Zen** through Zen model IDs such as `opencode/minimax-m3-free`
 
 The proxy does not accept API keys from local clients and does not implement its own OAuth flow. For Grok, it only reads the token created by `grok login --oauth`.
+
+## When to use this
+
+- You want to use [Claude Code](https://docs.anthropic.com/en/docs/claude-code/overview) but route to a non-Anthropic model (Grok, OpenCode Zen) for cost or experimentation.
+- You want OpenCode Zen's free model tier working inside Claude Code without a Zen API key.
+- You want a single local endpoint that can talk to multiple backends, switching by model name.
+
+## When *not* to use this
+
+- You need production-grade reliability, observability, or auth — this is a ~1k-line local dev proxy.
+- You want a generic OpenAI/Anthropic protocol bridge. This is shaped specifically around Claude Code's request shape.
 
 ## Quick Start
 
@@ -147,3 +161,11 @@ bun run test:live
 - Grok credentials are separate from OpenCode Zen credentials.
 - If Grok credentials are missing or expired, run `bun run login`.
 - Local proxy clients are unauthenticated, so keep the default `HOST=127.0.0.1` unless you intentionally want to expose it.
+
+## License
+
+[MIT](./LICENSE) — see [`LICENSE`](./LICENSE) for the full text.
+
+## Contributing
+
+See [`CONTRIBUTING.md`](./CONTRIBUTING.md).

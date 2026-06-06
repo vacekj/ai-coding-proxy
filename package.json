@@ -3,8 +3,25 @@
   "version": "0.1.0",
   "description": "Local Anthropic Messages API proxy for Claude Code, Grok Composer, and OpenCode Zen.",
   "license": "MIT",
-  "private": true,
+  "private": false,
   "type": "module",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/vacekj/ai-coding-proxy.git"
+  },
+  "bugs": {
+    "url": "https://github.com/vacekj/ai-coding-proxy/issues"
+  },
+  "homepage": "https://github.com/vacekj/ai-coding-proxy#readme",
+  "keywords": [
+    "anthropic",
+    "claude-code",
+    "grok",
+    "opencode",
+    "proxy",
+    "bun",
+    "llm"
+  ],
   "scripts": {
     "dev": "bun run src/server.ts",
     "start": "bun run src/server.ts",
