@@ -1,7 +1,7 @@
 {
   "name": "ai-coding-proxy",
   "version": "0.1.0",
-  "description": "Local Anthropic Messages API proxy for Claude Code, Grok Composer, and OpenCode Zen.",
+  "description": "Local Anthropic Messages API proxy for Claude Code, Grok Composer, OpenCode Zen, and NVIDIA NIM.",
   "license": "MIT",
   "private": false,
   "type": "module",
@@ -17,6 +17,7 @@
     "anthropic",
     "claude-code",
     "grok",
+    "nvidia",
     "opencode",
     "proxy",
     "bun",

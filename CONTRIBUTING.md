@@ -20,7 +20,8 @@ The `bun run test:live` and `bun run smoke` scripts hit real upstream services (
 src/                       Proxy source (server.ts is the entry point)
   anthropic-stream.ts      Anthropic SSE stream + ping keepalive
   config.ts                Env loading and defaults
-  opencode.ts              OpenCode Zen adapter (model list, request/response translation)
+  nvidia.ts                NVIDIA NIM adapter (model list, request/response translation)
+  opencode.ts              OpenCode Zen adapter (model list, shared OpenAI chat translation)
   oauth.ts                 Grok CLI OAuth token handling
   sanitize.ts              Oversized-request compaction
   server.ts                Bun.serve entry + endpoint routing

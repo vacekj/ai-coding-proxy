@@ -233,6 +233,7 @@ export interface OpenAIChatCompletion {
     message?: {
       role?: string;
       content?: string | Array<Record<string, unknown>> | null;
+      reasoning?: string;
       reasoning_content?: string;
       tool_calls?: OpenAIChatToolCall[];
     };

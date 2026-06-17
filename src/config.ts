@@ -7,6 +7,7 @@ export const XAI_DISCOVERY_URL = "https://auth.x.ai/.well-known/openid-configura
 export const GROK_CLI_DEFAULT_API_BASE_URL = "https://cli-chat-proxy.grok.com/v1";
 export const OPENCODE_ZEN_OPENAI_BASE_URL = "https://opencode.ai/zen/v1/chat/completions";
 export const OPENCODE_ZEN_ANTHROPIC_BASE_URL = "https://opencode.ai/zen/v1/messages";
+export const NVIDIA_OPENAI_BASE_URL = "https://integrate.api.nvidia.com/v1";
 export const XAI_REDIRECT_HOST = "127.0.0.1";
 export const XAI_REDIRECT_PATH = "/callback";
 export const XAI_CALLBACK_PORT = 56121;
@@ -32,6 +33,20 @@ export function opencodeDefaultModel(): string {
 
 export function opencodeApiKey(): string | undefined {
   return process.env.OPENCODE_API_KEY?.trim() || undefined;
+}
+
+export function nvidiaDefaultModel(): string {
+  return process.env.NVIDIA_PROXY_MODEL ?? "deepseek-v4-pro";
+}
+
+export function nvidiaApiKey(): string | undefined {
+  return process.env.NVIDIA_API_KEY?.trim() || undefined;
+}
+
+export function nvidiaChatCompletionsUrl(): string {
+  const base = (process.env.NVIDIA_OPENAI_BASE_URL ?? NVIDIA_OPENAI_BASE_URL).replace(/\/+$/, "");
+  if (base.endsWith("/chat/completions")) return base;
+  return `${base}/chat/completions`;
 }
 
 export function opencodeOpenAIBaseUrl(): string {

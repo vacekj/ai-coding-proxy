@@ -21,7 +21,15 @@ export interface SanitizedRequest {
   stats: SanitizeStats;
 }
 
-export function sanitizeAnthropicRequest(input: AnthropicMessageRequest): SanitizedRequest {
+export interface SanitizeOptions {
+  maxRequestChars?: number;
+}
+
+export function sanitizeAnthropicRequest(
+  input: AnthropicMessageRequest,
+  options: SanitizeOptions = {},
+): SanitizedRequest {
+  const requestCharLimit = options.maxRequestChars ?? maxRequestChars();
   const stats: SanitizeStats = {
     truncatedToolResults: 0,
     compactedToolResults: 0,
@@ -37,8 +45,8 @@ export function sanitizeAnthropicRequest(input: AnthropicMessageRequest): Saniti
   };
 
   let nextLength = serializedLength(request);
-  if (nextLength > maxRequestChars()) {
-    compactOldToolResults(request, stats);
+  if (nextLength > requestCharLimit) {
+    compactOldToolResults(request, requestCharLimit, stats);
     nextLength = serializedLength(request);
   }
 
@@ -62,15 +70,19 @@ function sanitizeMessage(
   };
 }
 
-function compactOldToolResults(request: AnthropicMessageRequest, stats: SanitizeStats): void {
+function compactOldToolResults(
+  request: AnthropicMessageRequest,
+  requestCharLimit: number,
+  stats: SanitizeStats,
+): void {
   const messages = request.messages ?? [];
 
   for (const message of messages) {
-    if (serializedLength(request) <= maxRequestChars()) return;
+    if (serializedLength(request) <= requestCharLimit) return;
     if (typeof message.content === "string") continue;
 
     message.content = message.content.map((block) => {
-      if (serializedLength(request) <= maxRequestChars()) return block;
+      if (serializedLength(request) <= requestCharLimit) return block;
       if (block.type !== "tool_result") return block;
       return sanitizeToolResult(block, compactedToolResultChars(), true, stats);
     });

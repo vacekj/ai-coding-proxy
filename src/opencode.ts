@@ -32,6 +32,12 @@ export interface OpenCodeModelConfig {
   noMultimodal?: boolean;
 }
 
+export interface OpenAIChatModelConfig {
+  id: string;
+  upstreamId: string;
+  noMultimodal?: boolean;
+}
+
 export class OpenCodeUpstreamError extends Error {
   constructor(
     public readonly status: number,
@@ -195,9 +201,9 @@ function opencodeHeaders(protocol: OpenCodeProtocol): Record<string, string> {
   return headers;
 }
 
-function anthropicToOpenAI(
+export function anthropicToOpenAI(
   input: AnthropicMessageRequest,
-  modelConfig: OpenCodeModelConfig,
+  modelConfig: OpenAIChatModelConfig,
 ): OpenAIChatRequest {
   const messages: OpenAIChatMessage[] = [];
   const system = systemText(input.system);
@@ -326,7 +332,7 @@ function openAIToolChoice(choice: AnthropicMessageRequest["tool_choice"]): unkno
   return "auto";
 }
 
-function openAIToAnthropic(
+export function openAIToAnthropic(
   completion: OpenAIChatCompletion,
   clientModel: string,
   estimatedInputTokens: number,
@@ -335,8 +341,9 @@ function openAIToAnthropic(
   const message = choice?.message ?? {};
   const content: AnthropicContentBlock[] = [];
 
-  if (typeof message.reasoning_content === "string" && message.reasoning_content) {
-    content.push({ type: "thinking", thinking: message.reasoning_content });
+  const reasoning = message.reasoning_content ?? message.reasoning;
+  if (typeof reasoning === "string" && reasoning) {
+    content.push({ type: "thinking", thinking: reasoning });
   }
 
   if (typeof message.content === "string" && message.content) {
@@ -454,7 +461,7 @@ function extractText(content: unknown): string {
 
 function effortFromAnthropic(
   input: AnthropicMessageRequest,
-  modelConfig: OpenCodeModelConfig,
+  modelConfig: OpenAIChatModelConfig,
 ): string | undefined {
   if (isDeepSeekV4(modelConfig)) return deepSeekV4EffortFromAnthropic(input);
 
@@ -498,8 +505,8 @@ function clampGenericEffort(value: string): string {
   return "medium";
 }
 
-function isDeepSeekV4(modelConfig: OpenCodeModelConfig): boolean {
-  return modelConfig.id.startsWith("deepseek-v4-");
+function isDeepSeekV4(modelConfig: OpenAIChatModelConfig): boolean {
+  return modelConfig.id.includes("deepseek-v4-") || modelConfig.upstreamId.includes("deepseek-v4-");
 }
 
 function parseToolArguments(raw: unknown): Record<string, unknown> {

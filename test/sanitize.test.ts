@@ -73,6 +73,31 @@ describe("sanitizeAnthropicRequest", () => {
     expect(JSON.stringify(result.request).length).toBeLessThanOrEqual(1400);
     expect(JSON.stringify(result.request)).toContain("older tool result compacted by proxy");
   });
+
+  it("uses an explicit whole-request budget when provided", () => {
+    process.env.PROXY_MAX_TOOL_RESULT_CHARS = "1000";
+    process.env.PROXY_MAX_REQUEST_CHARS = "5000";
+    process.env.PROXY_COMPACTED_TOOL_RESULT_CHARS = "120";
+
+    const result = sanitizeAnthropicRequest(
+      {
+        messages: [
+          {
+            role: "user",
+            content: [{ type: "tool_result", tool_use_id: "tool_1", content: "a".repeat(900) }],
+          },
+          {
+            role: "user",
+            content: [{ type: "tool_result", tool_use_id: "tool_2", content: "b".repeat(900) }],
+          },
+        ],
+      },
+      { maxRequestChars: 1400 },
+    );
+
+    expect(result.stats.compactedToolResults).toBeGreaterThan(0);
+    expect(JSON.stringify(result.request).length).toBeLessThanOrEqual(1400);
+  });
 });
 
 function restoreEnv(name: keyof typeof originalEnv): void {
