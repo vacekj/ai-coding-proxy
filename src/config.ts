@@ -7,7 +7,7 @@ export const XAI_DISCOVERY_URL = "https://auth.x.ai/.well-known/openid-configura
 export const GROK_CLI_DEFAULT_API_BASE_URL = "https://cli-chat-proxy.grok.com/v1";
 export const OPENCODE_ZEN_OPENAI_BASE_URL = "https://opencode.ai/zen/v1/chat/completions";
 export const OPENCODE_ZEN_ANTHROPIC_BASE_URL = "https://opencode.ai/zen/v1/messages";
-export const NVIDIA_OPENAI_BASE_URL = "https://integrate.api.nvidia.com/v1";
+export const CLINE_API_BASE_URL = "https://api.cline.bot";
 export const XAI_REDIRECT_HOST = "127.0.0.1";
 export const XAI_REDIRECT_PATH = "/callback";
 export const XAI_CALLBACK_PORT = 56121;
@@ -28,25 +28,42 @@ export function upstreamModel(): string {
 }
 
 export function opencodeDefaultModel(): string {
-  return process.env.OPENCODE_PROXY_MODEL ?? "minimax-m3-free";
+  return process.env.OPENCODE_PROXY_MODEL ?? "mimo-v2.5-free";
 }
 
 export function opencodeApiKey(): string | undefined {
   return process.env.OPENCODE_API_KEY?.trim() || undefined;
 }
 
-export function nvidiaDefaultModel(): string {
-  return process.env.NVIDIA_PROXY_MODEL ?? "deepseek-v4-pro";
+export function clineDefaultModel(): string {
+  return process.env.CLINE_PROXY_MODEL ?? "kimi-k3";
 }
 
-export function nvidiaApiKey(): string | undefined {
-  return process.env.NVIDIA_API_KEY?.trim() || undefined;
+export function clineApiKey(): string | undefined {
+  return process.env.CLINE_API_KEY?.trim() || undefined;
 }
 
-export function nvidiaChatCompletionsUrl(): string {
-  const base = (process.env.NVIDIA_OPENAI_BASE_URL ?? NVIDIA_OPENAI_BASE_URL).replace(/\/+$/, "");
+export function clineApiBaseUrl(): string {
+  return (process.env.CLINE_API_BASE ?? CLINE_API_BASE_URL).replace(/\/+$/, "");
+}
+
+export function clineChatCompletionsUrl(): string {
+  const base = clineApiBaseUrl();
   if (base.endsWith("/chat/completions")) return base;
-  return `${base}/chat/completions`;
+  if (base.endsWith("/api/v1")) return `${base}/chat/completions`;
+  return `${base}/api/v1/chat/completions`;
+}
+
+export function clineRefreshUrl(): string {
+  const base = clineApiBaseUrl();
+  if (base.endsWith("/api/v1")) return `${base}/auth/refresh`;
+  return `${base}/api/v1/auth/refresh`;
+}
+
+export function clineProvidersFilePath(): string {
+  return expandHome(
+    process.env.CLINE_PROVIDERS_FILE ?? join(homedir(), ".cline", "data", "settings", "providers.json"),
+  );
 }
 
 export function opencodeOpenAIBaseUrl(): string {

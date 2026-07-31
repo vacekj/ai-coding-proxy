@@ -20,13 +20,13 @@ import {
   resolveOpenCodeModel,
 } from "./opencode";
 import {
-  defaultNvidiaModel,
-  fetchNvidiaMessage,
-  isNvidiaModel,
-  nvidiaModels,
-  nvidiaRequestCharLimit,
-  resolveNvidiaModel,
-} from "./nvidia";
+  clineModels,
+  clineRequestCharLimit,
+  defaultClineModel,
+  fetchClineMessage,
+  isClineModel,
+  resolveClineModel,
+} from "./cline";
 import { estimateAnthropicInputTokens, anthropicToResponses } from "./translate";
 import { sanitizeAnthropicRequest } from "./sanitize";
 import type { AnthropicMessageRequest } from "./types";
@@ -50,10 +50,10 @@ const server = Bun.serve({
           default_provider: "grok",
           grok_model: upstreamModel(),
           opencode_model: defaultOpenCodeModel().id,
-          nvidia_model: defaultNvidiaModel().id,
+          cline_model: defaultClineModel().id,
           max_tool_result_chars: maxToolResultChars(),
           max_request_chars: maxRequestChars(),
-          nvidia_request_char_limits: nvidiaRequestCharLimits(),
+          cline_request_char_limits: clineRequestCharLimits(),
           compacted_tool_result_chars: compactedToolResultChars(),
           idle_timeout_seconds: serverIdleTimeoutSeconds(),
           stream_ping_ms: streamPingMs(),
@@ -72,7 +72,7 @@ const server = Bun.serve({
         const body = (await request.json()) as AnthropicMessageRequest;
         const route = routeProvider(body.model);
         const sanitized = sanitizeAnthropicRequest(body, {
-          maxRequestChars: route === "nvidia" ? nvidiaRequestCharLimit(body.model) : undefined,
+          maxRequestChars: requestCharLimitForRoute(route, body.model),
         });
         return json({
           input_tokens: estimateAnthropicInputTokens(sanitized.request),
@@ -117,42 +117,22 @@ const server = Bun.serve({
 console.log(`AI Coding Proxy listening on http://${host}:${server.port}`);
 console.log(`Using Grok CLI credentials from ~/.grok/auth.json and model ${upstreamModel()}`);
 console.log(`OpenCode Zen models are available in the same server; default ${defaultOpenCodeModel().id}`);
-console.log(`NVIDIA NIM models are available in the same server; default ${defaultNvidiaModel().id}`);
+console.log(`ClinePass models are available in the same server; default ${defaultClineModel().id}`);
 
 async function handleMessages(request: Request): Promise<Response> {
   const rawBody = (await request.json()) as AnthropicMessageRequest;
   const route = routeProvider(rawBody.model);
   const { request: body, stats } = sanitizeAnthropicRequest(rawBody, {
-    maxRequestChars: route === "nvidia" ? nvidiaRequestCharLimit(rawBody.model) : undefined,
+    maxRequestChars: requestCharLimitForRoute(route, rawBody.model),
   });
   logSanitization(stats);
 
-  if (route === "nvidia") {
-    const messagePromise = fetchNvidiaMessage(body, { signal: request.signal });
-    if (body.stream) {
-      return new Response(anthropicMessageToSSEStream(messagePromise), {
-        headers: {
-          "Content-Type": "text/event-stream; charset=utf-8",
-          "Cache-Control": "no-cache",
-          Connection: "keep-alive",
-        },
-      });
-    }
-    return json(await messagePromise);
+  if (route === "cline") {
+    return respondWithMessage(fetchClineMessage(body, { signal: request.signal }), body.stream);
   }
 
   if (route === "opencode") {
-    const messagePromise = fetchOpenCodeMessage(body, { signal: request.signal });
-    if (body.stream) {
-      return new Response(anthropicMessageToSSEStream(messagePromise), {
-        headers: {
-          "Content-Type": "text/event-stream; charset=utf-8",
-          "Cache-Control": "no-cache",
-          Connection: "keep-alive",
-        },
-      });
-    }
-    return json(await messagePromise);
+    return respondWithMessage(fetchOpenCodeMessage(body, { signal: request.signal }), body.stream);
   }
 
   const translation = anthropicToResponses(body);
@@ -228,11 +208,27 @@ function json(value: unknown, init: ResponseInit = {}): Response {
   });
 }
 
+function respondWithMessage(
+  messagePromise: Promise<import("./translate").AnthropicMessage>,
+  stream: boolean | undefined,
+): Response | Promise<Response> {
+  if (stream) {
+    return new Response(anthropicMessageToSSEStream(messagePromise), {
+      headers: {
+        "Content-Type": "text/event-stream; charset=utf-8",
+        "Cache-Control": "no-cache",
+        Connection: "keep-alive",
+      },
+    });
+  }
+  return messagePromise.then((message) => json(message));
+}
+
 function modelsList() {
   const grokModel = modelDetails(upstreamModel());
   const opencodeModels = openCodeModels().map((model) => modelDetails(`opencode/${model.id}`));
-  const nvidiaModelDetails = nvidiaModels().map((model) => modelDetails(`nvidia/${model.id}`));
-  const data = [grokModel, ...opencodeModels, ...nvidiaModelDetails];
+  const clineModelDetails = clineModels().map((model) => modelDetails(`cline/${model.id}`));
+  const data = [grokModel, ...opencodeModels, ...clineModelDetails];
   return {
     data,
     has_more: false,
@@ -242,22 +238,24 @@ function modelsList() {
 }
 
 function modelDetails(id: string) {
-  const nvidia = resolveNvidiaModel(id);
-  if (nvidia) {
+  const cline = resolveClineModel(id);
+  if (cline) {
     return {
-      id: id || `nvidia/${nvidia.id}`,
+      id: id.startsWith("cline/") || id.startsWith("cline-pass/") || id.startsWith("clinepass/")
+        ? id
+        : `cline/${cline.id}`,
       type: "model",
-      display_name: nvidia.displayName,
-      created_at: "2026-04-23T00:00:00Z",
-      context_window: nvidia.contextWindow,
-      contextWindow: nvidia.contextWindow,
-      max_input_tokens: nvidia.contextWindow,
-      maxInputTokens: nvidia.contextWindow,
-      input_token_limit: nvidia.contextWindow,
-      compact_at_chars: nvidia.compactAtChars,
-      claude_auto_compact_window: nvidia.compactAtChars,
-      max_output_tokens: nvidia.maxOutputTokens,
-      maxOutputTokens: nvidia.maxOutputTokens,
+      display_name: cline.displayName,
+      created_at: "2026-07-22T00:00:00Z",
+      context_window: cline.contextWindow,
+      contextWindow: cline.contextWindow,
+      max_input_tokens: cline.contextWindow,
+      maxInputTokens: cline.contextWindow,
+      input_token_limit: cline.contextWindow,
+      compact_at_chars: cline.compactAtChars,
+      claude_auto_compact_window: cline.compactAtChars,
+      max_output_tokens: cline.maxOutputTokens,
+      maxOutputTokens: cline.maxOutputTokens,
     };
   }
 
@@ -279,18 +277,26 @@ function modelDetails(id: string) {
   };
 }
 
-function routeProvider(model: string | undefined): "nvidia" | "opencode" | "grok" {
-  if (model && isNvidiaModel(model)) return "nvidia";
+function routeProvider(model: string | undefined): "opencode" | "cline" | "grok" {
+  if (model && isClineModel(model)) return "cline";
   if (model && isOpenCodeModel(model)) return "opencode";
 
   const provider = process.env.PROXY_PROVIDER?.toLowerCase();
-  if (provider === "nvidia") return "nvidia";
+  if (provider === "cline" || provider === "clinepass" || provider === "cline-pass") return "cline";
   if (provider === "opencode") return "opencode";
   return "grok";
 }
 
-function nvidiaRequestCharLimits(): Record<string, number> {
-  return Object.fromEntries(nvidiaModels().map((model) => [`nvidia/${model.id}`, model.compactAtChars]));
+function requestCharLimitForRoute(
+  route: ReturnType<typeof routeProvider>,
+  model: string | undefined,
+): number | undefined {
+  if (route === "cline") return clineRequestCharLimit(model);
+  return undefined;
+}
+
+function clineRequestCharLimits(): Record<string, number> {
+  return Object.fromEntries(clineModels().map((model) => [`cline/${model.id}`, model.compactAtChars]));
 }
 
 export { server };
