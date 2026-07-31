@@ -60,13 +60,12 @@ const OPENAI_MODELS = [
   "minimax-m2.7",
   "minimax-m2.5",
   "mimo-v2.5-free",
-  "nemotron-3-super-free",
   "nemotron-3-ultra-free",
+  "north-mini-code-free",
 ];
 
 const ANTHROPIC_MODELS = [
   "minimax-m3",
-  "minimax-m3-free",
   "qwen3.7-max",
   "qwen3.6-plus",
   "qwen3.6-plus-free",
@@ -113,7 +112,7 @@ export function resolveOpenCodeModel(model: string | undefined): OpenCodeModelCo
 }
 
 export function defaultOpenCodeModel(): OpenCodeModelConfig {
-  return resolveOpenCodeModel(opencodeDefaultModel()) ?? MODEL_CONFIGS.get("minimax-m3-free")!;
+  return resolveOpenCodeModel(opencodeDefaultModel()) ?? MODEL_CONFIGS.get("mimo-v2.5-free")!;
 }
 
 export async function fetchOpenCodeMessage(

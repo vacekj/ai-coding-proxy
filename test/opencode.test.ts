@@ -1,13 +1,28 @@
 import { afterEach, describe, expect, it } from "bun:test";
-import { fetchOpenCodeMessage } from "../src/opencode";
+import { defaultOpenCodeModel, fetchOpenCodeMessage } from "../src/opencode";
 
 const originalFetch = globalThis.fetch;
+const originalOpenCodeProxyModel = process.env.OPENCODE_PROXY_MODEL;
 
 afterEach(() => {
   globalThis.fetch = originalFetch;
+  if (originalOpenCodeProxyModel == null) delete process.env.OPENCODE_PROXY_MODEL;
+  else process.env.OPENCODE_PROXY_MODEL = originalOpenCodeProxyModel;
 });
 
 describe("fetchOpenCodeMessage", () => {
+  it("uses Mimo as the unauthenticated OpenCode default", async () => {
+    delete process.env.OPENCODE_PROXY_MODEL;
+
+    const body = await openCodeRequestBody({
+      max_tokens: 1024,
+      messages: [{ role: "user", content: "hi" }],
+    });
+
+    expect(defaultOpenCodeModel().id).toBe("mimo-v2.5-free");
+    expect(body.model).toBe("mimo-v2.5-free");
+  });
+
   it("maps Claude thinking effort to DeepSeek V4 reasoning_effort", async () => {
     const body = await openCodeRequestBody({
       model: "opencode/deepseek-v4-flash-free",

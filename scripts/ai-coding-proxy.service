@@ -1,0 +1,16 @@
+[Unit]
+Description=ai-coding-proxy (local Anthropic-compatible VLM gateway)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+Environment=PATH=%h/.bun/bin:/run/current-system/sw/bin:/usr/bin:/bin
+Environment=AI_CODING_PROXY_ENV=%h/.config/ai-coding-proxy/env
+WorkingDirectory=%h/ai-coding-proxy
+ExecStart=%h/ai-coding-proxy/scripts/run-proxy.sh
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=default.target

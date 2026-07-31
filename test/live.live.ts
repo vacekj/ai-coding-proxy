@@ -127,14 +127,104 @@ describe("live Grok Composer proxy", () => {
   }, TEST_TIMEOUT_MS);
 });
 
+describe("live ClinePass proxy", () => {
+  const clineModel = process.env.LIVE_CLINE_MODEL ?? "cline/kimi-k3";
+
+  async function hasClineAuth(): Promise<boolean> {
+    if (process.env.CLINE_API_KEY?.trim()) return true;
+    return Bun.file(`${process.env.HOME}/.cline/data/settings/providers.json`).exists();
+  }
+
+  it("handles a real ClinePass text response via the local Anthropic proxy", async () => {
+    if (!(await hasClineAuth())) {
+      console.warn("skipping ClinePass live test: no CLINE_API_KEY or ~/.cline providers.json");
+      return;
+    }
+
+    const expected = `cline-live-${crypto.randomUUID().slice(0, 8)}`;
+    const response = await proxyMessages({
+      model: clineModel,
+      max_tokens: 256,
+      messages: [
+        {
+          role: "user",
+          content: `Reply with exactly this string and nothing else: ${expected}`,
+        },
+      ],
+    });
+
+    const text = anthropicText(response.content ?? []).trim();
+    expect(text).toContain(expected);
+  }, 180_000);
+
+  it("translates a real ClinePass tool call and handles a tool_result round trip", async () => {
+    if (!(await hasClineAuth())) {
+      console.warn("skipping ClinePass live tool test: no CLINE_API_KEY or ~/.cline providers.json");
+      return;
+    }
+
+    // Kimi K3 rejects forced tool_choice while thinking is enabled ("tool_choice
+    // 'specified' is incompatible with thinking"). Use auto + strong instruction,
+    // or LIVE_CLINE_TOOL_MODEL for a faster non-always-thinking ClinePass model.
+    const toolModel = process.env.LIVE_CLINE_TOOL_MODEL ?? clineModel;
+
+    const first = await proxyMessages({
+      model: toolModel,
+      max_tokens: 1024,
+      tool_choice: { type: "auto" },
+      tools: [bashAnthropicTool()],
+      messages: [
+        {
+          role: "user",
+          content:
+            "You must call the Bash tool exactly once with command pwd. Do not answer in prose before the tool call.",
+        },
+      ],
+    });
+
+    const toolUse = anthropicToolUses(first.content ?? [])[0];
+    expect(toolUse?.name).toBe("Bash");
+    expect(String(toolUse?.input?.command ?? "")).toContain("pwd");
+
+    const pwdOutput = await runRealPwd();
+    const expected = `cline-ok-${crypto.randomUUID().slice(0, 4)}`;
+    const second = await proxyMessages({
+      model: toolModel,
+      max_tokens: 1024,
+      tools: [bashAnthropicTool()],
+      messages: [
+        {
+          role: "user",
+          content:
+            "You must call the Bash tool exactly once with command pwd. After the tool result, reply exactly with the marker string I give you.",
+        },
+        { role: "assistant", content: [toolUse] },
+        {
+          role: "user",
+          content: [
+            { type: "tool_result", tool_use_id: toolUse.id, content: pwdOutput },
+            {
+              type: "text",
+              text: `Tool finished. Reply exactly: ${expected}`,
+            },
+          ],
+        },
+      ],
+    });
+
+    expect(anthropicToolUses(second.content ?? [])).toHaveLength(0);
+    expect(anthropicText(second.content ?? []).trim()).toContain(expected);
+  }, 300_000);
+});
+
 describe("live OpenCode Zen proxy", () => {
-  const zenModel = process.env.LIVE_OPENCODE_MODEL ?? "opencode/minimax-m3-free";
+  const zenModel = process.env.LIVE_OPENCODE_MODEL ?? "opencode/mimo-v2.5-free";
 
   it("handles a real OpenCode Zen free-model text response", async () => {
     const expected = `zen-live-proxy-${crypto.randomUUID().slice(0, 8)}`;
     const response = await proxyMessages({
       model: zenModel,
-      max_tokens: 64,
+      max_tokens: 512,
       messages: [{ role: "user", content: `Reply exactly: ${expected}` }],
     });
 
@@ -144,7 +234,7 @@ describe("live OpenCode Zen proxy", () => {
   it("translates a real OpenCode Zen tool call and handles a real tool_result round trip", async () => {
     const first = await proxyMessages({
       model: zenModel,
-      max_tokens: 128,
+      max_tokens: 256,
       tool_choice: { type: "tool", name: "Bash" },
       tools: [bashAnthropicTool()],
       messages: [{ role: "user", content: "Use the Bash tool to run pwd." }],
@@ -158,7 +248,7 @@ describe("live OpenCode Zen proxy", () => {
     const expected = `zen-ok-${crypto.randomUUID().slice(0, 4)}`;
     const second = await proxyMessages({
       model: zenModel,
-      max_tokens: 256,
+      max_tokens: 512,
       tool_choice: { type: "none" },
       tools: [bashAnthropicTool()],
       messages: [
