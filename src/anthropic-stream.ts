@@ -30,6 +30,9 @@ export async function collectXAIResponse(response: Response): Promise<XAIRespons
     }
 
     if (event.type === "response.output_item.done" && event.item) {
+      if (event.item.type === "function_call" && !event.item.name && !event.item.arguments) {
+        continue;
+      }
       if (typeof event.output_index === "number") outputByIndex.set(event.output_index, event.item);
       else outputFallback.push(event.item);
     }
@@ -65,7 +68,10 @@ export async function xaiResponseToAnthropicMessage(
   );
 }
 
-export function anthropicMessageToSSEStream(messagePromise: Promise<AnthropicMessage>): ReadableStream<Uint8Array> {
+export function anthropicMessageToSSEStream(
+  messagePromise: Promise<AnthropicMessage>,
+  options: { signal?: AbortSignal; abort?: () => void } = {},
+): ReadableStream<Uint8Array> {
   const encoder = new TextEncoder();
   let closed = false;
   let pingInterval: ReturnType<typeof setInterval> | undefined;
@@ -80,6 +86,13 @@ export function anthropicMessageToSSEStream(messagePromise: Promise<AnthropicMes
 
   return new ReadableStream({
     async start(controller) {
+      if (options.signal?.aborted) {
+        stop();
+        controller.close();
+        return;
+      }
+      options.signal?.addEventListener("abort", stop, { once: true });
+
       const send = (event: string, data: unknown) => {
         if (closed) return;
         try {
@@ -88,6 +101,7 @@ export function anthropicMessageToSSEStream(messagePromise: Promise<AnthropicMes
           // Downstream consumer disconnected; stop emitting so the ping
           // interval can't throw on a closed controller and crash the process.
           stop();
+          options.abort?.();
         }
       };
       pingInterval = setInterval(() => {
@@ -108,7 +122,7 @@ export function anthropicMessageToSSEStream(messagePromise: Promise<AnthropicMes
             stop_sequence: null,
             usage: {
               input_tokens: message.usage.input_tokens,
-              cache_read_input_tokens: message.usage.cache_read_input_tokens,
+              cache_read_input_tokens: message.usage.cache_read_input_tokens ?? 0,
               output_tokens: 0,
             },
           },
@@ -146,6 +160,7 @@ export function anthropicMessageToSSEStream(messagePromise: Promise<AnthropicMes
     },
     cancel() {
       stop();
+      options.abort?.();
     },
   });
 }

@@ -1,8 +1,9 @@
 import { readFile } from "node:fs/promises";
-import { XAI_CLIENT_ID, apiBaseUrl, grokCliAuthFilePath } from "./config";
+import { XAI_CLIENT_ID, grokApiBaseUrl, grokCliAuthFilePath } from "./config";
+import { nearExpiry } from "./util";
 import type { GrokCliAuthFile, GrokCliAuthEntry, OAuthTokenFile } from "./types";
 
-const EXPIRY_LEAD_SECONDS = 5 * 60;
+const EXPIRY_LEAD_MS = 5 * 60_000;
 
 export async function loadOAuthToken(): Promise<OAuthTokenFile> {
   const token = await loadGrokCliToken();
@@ -11,7 +12,7 @@ export async function loadOAuthToken(): Promise<OAuthTokenFile> {
       `No usable Grok CLI OAuth token found in ${grokCliAuthFilePath()}. Run "grok login --oauth", then retry.`,
     );
   }
-  if (isExpired(token)) {
+  if (nearExpiry(token.expires_at != null ? token.expires_at * 1000 : undefined, EXPIRY_LEAD_MS)) {
     throw new Error(
       `Grok CLI OAuth token in ${grokCliAuthFilePath()} is expired or near expiry. Run "grok login --oauth", then retry.`,
     );
@@ -36,10 +37,8 @@ async function loadGrokCliToken(): Promise<OAuthTokenFile | undefined> {
     type: "xai",
     auth_kind: "oauth",
     access_token: entry.key,
-    refresh_token: entry.refresh_token,
     expires_at: isoToEpochSeconds(entry.expires_at) ?? identity?.exp,
-    expired: entry.expires_at,
-    base_url: apiBaseUrl(),
+    base_url: grokApiBaseUrl(),
     email: typeof entry.email === "string" ? entry.email : identity?.email,
     sub:
       typeof entry.user_id === "string"
@@ -61,11 +60,6 @@ function findGrokCliAuthEntry(authFile: GrokCliAuthFile): GrokCliAuthEntry | und
     }
   }
   return undefined;
-}
-
-function isExpired(token: OAuthTokenFile): boolean {
-  if (!token.expires_at) return false;
-  return Math.floor(Date.now() / 1000) + EXPIRY_LEAD_SECONDS >= token.expires_at;
 }
 
 function isoToEpochSeconds(value?: string): number | undefined {

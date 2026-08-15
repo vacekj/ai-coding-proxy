@@ -1,0 +1,627 @@
+import { afterAll, beforeAll, describe, expect, it } from "bun:test";
+import { rm } from "node:fs/promises";
+import { parseSSE, type SSEMessage } from "../src/sse";
+import type { Server } from "bun";
+type ProxyServer = (typeof import("../src/server"))["server"];
+
+
+const encoder = new TextEncoder();
+
+const originalEnv: Record<string, string | undefined> = {};
+const envKeys = [
+  "PORT",
+  "GROK_CLI_AUTH_FILE",
+  "CLINE_API_KEY",
+  "PROXY_MAX_TOOL_RESULT_CHARS",
+  "PROXY_MAX_REQUEST_CHARS",
+] as const;
+for (const key of envKeys) originalEnv[key] = process.env[key];
+
+let server: ProxyServer;
+let baseUrl: string;
+let authFilePath: string;
+let serverStarted = false;
+
+let upstreamHandler: ((url: string, init?: RequestInit) => Response | Promise<Response>) | undefined;
+
+beforeAll(async () => {
+  process.env.PORT = String(19_000 + (process.pid % 500));
+  process.env.CLINE_API_KEY = "test-cline-key";
+  process.env.PROXY_MAX_TOOL_RESULT_CHARS = "100";
+  process.env.PROXY_MAX_REQUEST_CHARS = "2000";
+
+  authFilePath = `/tmp/ai-coding-proxy-integration-auth-${crypto.randomUUID()}.json`;
+  process.env.GROK_CLI_AUTH_FILE = authFilePath;
+  await Bun.write(
+    authFilePath,
+    JSON.stringify({
+      "https://auth.x.ai::b1a00492-073a-47ea-816f-4c329264a828": {
+        key: "header.payload",
+        expires_at: "2099-01-01T00:00:00Z",
+      },
+    }),
+  );
+
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = (async (url: string | URL | Request, init?: RequestInit) => {
+    const u = String(url);
+    // Only intercept upstream (non-localhost) calls; client requests to the
+    // proxy itself must use the real fetch.
+    if (u.startsWith("http://127.0.0.1:")) return realFetch(url, init);
+    if (!upstreamHandler) throw new Error(`Unexpected upstream call: ${u}`);
+    return upstreamHandler(u, init);
+  }) as typeof fetch;
+
+  const mod = await import("../src/server");
+  server = mod.server;
+  baseUrl = `http://127.0.0.1:${server.port}`;
+  serverStarted = true;
+});
+
+afterAll(async () => {
+  server?.stop();
+  await rm(authFilePath, { force: true });
+  for (const key of envKeys) {
+    const value = originalEnv[key];
+    if (value == null) delete process.env[key];
+    else process.env[key] = value;
+  }
+  serverStarted = false;
+});
+
+describe("server health and model listing", () => {
+  it("serves /health", async () => {
+    const response = await fetch(`${baseUrl}/health`);
+    expect(response.status).toBe(200);
+    const body = (await response.json()) as Record<string, unknown>;
+    expect(body.ok).toBe(true);
+    expect(body.default_provider).toBe("grok");
+  });
+
+  it("lists grok, opencode, and cline models with dual key formats", async () => {
+    const response = await fetch(`${baseUrl}/v1/models`);
+    expect(response.status).toBe(200);
+    const body = (await response.json()) as {
+      data: Array<Record<string, unknown>>;
+    };
+    const ids = body.data.map((model) => model.id);
+    expect(ids).toContain("grok-composer-2.5-fast");
+    expect(ids).toContain("opencode/mimo-v2.5-free");
+    expect(ids).toContain("cline/kimi-k3");
+    const clineDetail = body.data.find((model) => model.id === "cline/kimi-k3")!;
+    expect(clineDetail.context_window).toBe(1_000_000);
+    expect(clineDetail.contextWindow).toBe(1_000_000);
+    expect(clineDetail.max_input_tokens).toBe(1_000_000);
+  });
+
+  it("returns 404 for unknown routes", async () => {
+    const response = await fetch(`${baseUrl}/nope`);
+    expect(response.status).toBe(404);
+    const body = (await response.json()) as { error: { type: string } };
+    expect(body.error.type).toBe("not_found_error");
+  });
+});
+
+describe("grok route", () => {
+  it("returns a buffered Anthropic message for non-stream requests", async () => {
+    upstreamHandler = () =>
+      Response.json({
+        id: "resp_1",
+        object: "response",
+        model: "grok-composer-2.5-fast",
+        output: [
+          {
+            type: "message",
+            id: "msg_1",
+            role: "assistant",
+            content: [{ type: "output_text", text: "hello from grok" }],
+          },
+        ],
+        usage: { input_tokens: 10, output_tokens: 5 },
+        stop_reason: "end_turn",
+      });
+
+    const response = await fetch(`${baseUrl}/v1/messages`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        model: "grok-composer-2.5-fast",
+        max_tokens: 64,
+        messages: [{ role: "user", content: "hi" }],
+      }),
+    });
+
+    expect(response.status).toBe(200);
+    const message = (await response.json()) as {
+      type: string;
+      content: Array<{ type: string; text: string }>;
+      usage: { input_tokens: number };
+    };
+    expect(message.type).toBe("message");
+    expect(message.content).toEqual([{ type: "text", text: "hello from grok" }]);
+    expect(message.usage.input_tokens).toBe(10);
+  });
+
+  it("streams Anthropic SSE events from a CRLF upstream and reports cache reads", async () => {
+    upstreamHandler = () =>
+      new Response(
+        [
+          `event: response.output_item.done\r\ndata: ${JSON.stringify({
+            type: "response.output_item.done",
+            output_index: 0,
+            item: {
+              type: "message",
+              id: "msg_1",
+              role: "assistant",
+              content: [{ type: "output_text", text: "crlf works" }],
+            },
+          })}\r\n\r\n`,
+          `event: response.completed\r\ndata: ${JSON.stringify({
+            type: "response.completed",
+            response: {
+              id: "resp_1",
+              object: "response",
+              model: "grok-composer-2.5-fast",
+              output: [
+                {
+                  type: "message",
+                  id: "msg_1",
+                  role: "assistant",
+                  content: [{ type: "output_text", text: "crlf works" }],
+                },
+              ],
+              usage: {
+                input_tokens: 8,
+                output_tokens: 3,
+                input_tokens_details: { cached_tokens: 5 },
+              },
+              stop_reason: "end_turn",
+            },
+          })}\r\n\r\n`,
+        ].join(""),
+        { headers: { "Content-Type": "text/event-stream" } },
+      );
+
+    const response = await fetch(`${baseUrl}/v1/messages`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        model: "grok-composer-2.5-fast",
+        max_tokens: 64,
+        stream: true,
+        messages: [{ role: "user", content: "hi" }],
+      }),
+    });
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get("content-type")).toContain("text/event-stream");
+
+    const events = await collectEvents(response);
+    const names = events.map((event) => event.event);
+
+    expect(names).toEqual([
+      "message_start",
+      "content_block_start",
+      "content_block_delta",
+      "content_block_stop",
+      "message_delta",
+      "message_stop",
+    ]);
+
+    const start = events.find((event) => event.event === "message_start")!.parsed as {
+      message: { usage: Record<string, unknown>; model: string };
+    };
+    expect(start.message.model).toBe("grok-composer-2.5-fast");
+    expect(start.message.usage.input_tokens).toBe(3);
+    expect(start.message.usage.cache_read_input_tokens).toBe(5);
+
+    const delta = events.find((event) => event.event === "content_block_delta")!.parsed as {
+      delta: { type: string; text: string };
+    };
+    expect(delta.delta).toEqual({ type: "text_delta", text: "crlf works" });
+  });
+
+  it("counts tokens and reports sanitization stats", async () => {
+    const response = await fetch(`${baseUrl}/v1/messages/count_tokens`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        model: "grok-composer-2.5-fast",
+        messages: [
+          {
+            role: "user",
+            content: [
+              { type: "tool_result", tool_use_id: "t1", content: "a".repeat(5000) },
+            ],
+          },
+        ],
+      }),
+    });
+
+    expect(response.status).toBe(200);
+    const body = (await response.json()) as {
+      input_tokens: number;
+      original_input_tokens: number;
+      sanitized: { truncated_tool_results: number; original_chars: number; sanitized_chars: number };
+    };
+    expect(body.sanitized.truncated_tool_results).toBe(1);
+    expect(body.sanitized.sanitized_chars).toBeLessThan(body.sanitized.original_chars);
+    expect(body.input_tokens).toBeLessThan(body.original_input_tokens);
+  });
+
+  it("aborts the upstream fetch when the client disconnects mid-stream", async () => {
+    process.env.PROXY_STREAM_PING_MS = "50";
+    let upstreamSignal: AbortSignal | undefined;
+
+    upstreamHandler = (_url, init) => {
+      upstreamSignal = init?.signal ?? undefined;
+      const body = new ReadableStream<Uint8Array>({
+        start(controller) {
+          controller.enqueue(
+            encoder.encode(
+              `event: response.output_item.done\ndata: ${JSON.stringify({
+                type: "response.output_item.done",
+                output_index: 0,
+                item: {
+                  type: "message",
+                  id: "msg_1",
+                  role: "assistant",
+                  content: [{ type: "output_text", text: "partial" }],
+                },
+              })}\n\n`,
+            ),
+          );
+        },
+      });
+      return new Response(body, { headers: { "Content-Type": "text/event-stream" } });
+    };
+
+    try {
+      await postAndDisconnect(server.port!, {
+        model: "grok-composer-2.5-fast",
+        max_tokens: 64,
+        stream: true,
+        messages: [{ role: "user", content: "hi" }],
+      });
+
+      await waitFor(() => upstreamSignal?.aborted === true, 3000);
+    } finally {
+      delete process.env.PROXY_STREAM_PING_MS;
+    }
+  });
+});
+
+describe("cline route", () => {
+  it("streams text and tool calls from chat completion chunks", async () => {
+    let captured: { url: string; headers: Headers; body: Record<string, unknown> } | undefined;
+
+    upstreamHandler = (url, init) => {
+      captured = {
+        url,
+        headers: new Headers(init?.headers),
+        body: JSON.parse(String(init?.body)) as Record<string, unknown>,
+      };
+      const chunks = [
+        { delta: { role: "assistant", content: "Hel" } },
+        { delta: { content: "lo" } },
+        { delta: { tool_calls: [{ index: 0, id: "call_1", function: { name: "Bash", arguments: '{"command":' } }] } },
+        { delta: { tool_calls: [{ index: 0, function: { arguments: '"pwd"}' } }] }, finish_reason: "tool_calls" },
+      ];
+      return sseResponse(
+        chunks
+          .map(
+            (chunk) =>
+              `data: ${JSON.stringify({
+                id: "chatcmpl_1",
+                object: "chat.completion.chunk",
+                choices: [{ index: 0, ...chunk }],
+              })}\n\n`,
+          )
+          .join("") + "data: [DONE]\n\n",
+      );
+    };
+
+    const response = await fetch(`${baseUrl}/v1/messages`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        model: "cline/kimi-k3",
+        max_tokens: 64,
+        stream: true,
+        messages: [{ role: "user", content: "run pwd" }],
+      }),
+    });
+
+    expect(response.status).toBe(200);
+    expect(captured?.url).toBe("https://api.cline.bot/api/v1/chat/completions");
+    expect(captured?.headers.get("authorization")).toBe("Bearer test-cline-key");
+    expect(captured?.body.stream).toBe(true);
+    expect(captured?.body.model).toBe("cline-pass/kimi-k3");
+    expect(captured?.body.effort).toBeUndefined();
+
+    const events = await collectEvents(response);
+    const names = events.map((event) => event.event);
+
+    const textDeltas = events
+      .filter((event) => event.event === "content_block_delta")
+      .map((event) => (event.parsed as { delta: { type: string; text?: string } }).delta)
+      .filter((delta) => delta.type === "text_delta");
+    expect(textDeltas.map((delta) => delta.text).join("")).toBe("Hello");
+
+    const toolStart = events
+      .filter((event) => event.event === "content_block_start")
+      .map((event) => event.parsed as { content_block: { type: string; id: string; name: string } })
+      .find((event) => event.content_block.type === "tool_use")!;
+    expect(toolStart.content_block).toMatchObject({ type: "tool_use", id: "call_1", name: "Bash" });
+
+    const finalDelta = events.find((event) => event.event === "message_delta")!.parsed as {
+      delta: { stop_reason: string };
+    };
+    expect(finalDelta.delta.stop_reason).toBe("tool_use");
+    expect(names.at(-1)).toBe("message_stop");
+  });
+
+  it("returns a buffered message for non-stream requests", async () => {
+    upstreamHandler = () =>
+      Response.json({
+        id: "gen_1",
+        choices: [{ message: { content: "ok from cline" }, finish_reason: "stop" }],
+        usage: { prompt_tokens: 3, completion_tokens: 2 },
+      });
+
+    const response = await fetch(`${baseUrl}/v1/messages`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        model: "cline/kimi-k2.6",
+        max_tokens: 32,
+        messages: [{ role: "user", content: "hi" }],
+      }),
+    });
+
+    expect(response.status).toBe(200);
+    const message = (await response.json()) as { content: Array<{ type: string; text: string }> };
+    expect(message.content).toEqual([{ type: "text", text: "ok from cline" }]);
+  });
+
+  it("truncates oversized tool results before forwarding upstream", async () => {
+    let upstreamBody: string | undefined;
+
+    upstreamHandler = (_url, init) => {
+      upstreamBody = String(init?.body);
+      return Response.json({
+        id: "gen_1",
+        choices: [{ message: { content: "done" }, finish_reason: "stop" }],
+        usage: { prompt_tokens: 3, completion_tokens: 1 },
+      });
+    };
+
+    const response = await fetch(`${baseUrl}/v1/messages`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        model: "cline/kimi-k2.6",
+        max_tokens: 32,
+        messages: [
+          {
+            role: "user",
+            content: [{ type: "tool_result", tool_use_id: "t1", content: "b".repeat(5000) }],
+          },
+        ],
+      }),
+    });
+
+    expect(response.status).toBe(200);
+    expect(upstreamBody).toContain("large tool result truncated by proxy");
+  });
+});
+
+describe("opencode route", () => {
+  it("streams via the OpenAI chat protocol relay", async () => {
+    let captured: { headers: Headers; body: Record<string, unknown> } | undefined;
+
+    upstreamHandler = (url, init) => {
+      captured = {
+        headers: new Headers(init?.headers),
+        body: JSON.parse(String(init?.body)) as Record<string, unknown>,
+      };
+      return sseResponse(
+        [
+          { delta: { role: "assistant", content: "zen" } },
+          { delta: { reasoning_content: "thinking hard" } },
+          { delta: { content: " reply" } },
+        ]
+          .map(
+            (chunk) =>
+              `data: ${JSON.stringify({
+                id: "chatcmpl_2",
+                object: "chat.completion.chunk",
+                choices: [{ index: 0, ...chunk, finish_reason: null }],
+              })}\n\n`,
+          )
+          .join("") +
+          `data: ${JSON.stringify({
+            id: "chatcmpl_2",
+            object: "chat.completion.chunk",
+            choices: [{ index: 0, delta: {}, finish_reason: "stop" }],
+            usage: { completion_tokens: 4, completion_tokens_details: { reasoning_tokens: 2 } },
+          })}\n\n` +
+          "data: [DONE]\n\n",
+      );
+    };
+
+    const response = await fetch(`${baseUrl}/v1/messages`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        model: "opencode/kimi-k2.6",
+        max_tokens: 64,
+        stream: true,
+        messages: [{ role: "user", content: "hi" }],
+      }),
+    });
+
+    expect(response.status).toBe(200);
+    expect(captured?.body.model).toBe("kimi-k2.6");
+    expect(captured?.body.stream).toBe(true);
+    expect(captured?.headers.get("authorization")).toBeNull();
+
+    const events = await collectEvents(response);
+    const deltas = events
+      .filter((event) => event.event === "content_block_delta")
+      .map((event) => event.parsed as { delta: { type: string; text?: string } });
+
+    const textDeltas = events
+      .filter((event) => event.event === "content_block_delta")
+      .map((event) => (event.parsed as { delta: { type: string; text?: string } }).delta)
+      .filter((delta) => delta.type === "text_delta");
+    expect(textDeltas.map((delta) => delta.text).join("")).toBe("zen reply");
+    expect(deltas.some((d) => d.delta.type === "thinking_delta")).toBe(true);
+
+    const start = events.find((event) => event.event === "message_start")!.parsed as {
+      message: { model: string };
+    };
+    expect(start.message.model).toBe("opencode/kimi-k2.6");
+
+    const finalDelta = events.find((event) => event.event === "message_delta")!.parsed as {
+      usage: { output_tokens: number };
+    };
+    expect(finalDelta.usage.output_tokens).toBe(6);
+  });
+
+  it("relays the anthropic-protocol upstream with the client model rewritten", async () => {
+    upstreamHandler = () =>
+      new Response(
+        [
+          `event: message_start\ndata: ${JSON.stringify({
+            type: "message_start",
+            message: { id: "msg_up", type: "message", role: "assistant", model: "qwen3.7-max", content: [] },
+          })}\n\n`,
+          `event: content_block_start\ndata: ${JSON.stringify({
+            type: "content_block_start",
+            index: 0,
+            content_block: { type: "text", text: "" },
+          })}\n\n`,
+          `event: content_block_delta\ndata: ${JSON.stringify({
+            type: "content_block_delta",
+            index: 0,
+            delta: { type: "text_delta", text: "relayed" },
+          })}\n\n`,
+          `event: content_block_stop\ndata: ${JSON.stringify({ type: "content_block_stop", index: 0 })}\n\n`,
+          `event: message_stop\ndata: ${JSON.stringify({ type: "message_stop" })}\n\n`,
+        ].join(""),
+        { headers: { "Content-Type": "text/event-stream" } },
+      );
+
+    const response = await fetch(`${baseUrl}/v1/messages`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        model: "opencode/qwen3.7-max",
+        max_tokens: 64,
+        stream: true,
+        messages: [{ role: "user", content: "hi" }],
+      }),
+    });
+
+    expect(response.status).toBe(200);
+    const events = await collectEvents(response);
+    const start = events.find((event) => event.event === "message_start")!.parsed as {
+      message: { model: string; id: string };
+    };
+    expect(start.message.model).toBe("opencode/qwen3.7-max");
+    expect(start.message.id).toBe("msg_up");
+
+    const delta = events.find((event) => event.event === "content_block_delta")!.parsed as {
+      delta: { type: string; text: string };
+    };
+    expect(delta.delta).toEqual({ type: "text_delta", text: "relayed" });
+    expect(events.at(-1)?.event).toBe("message_stop");
+  });
+
+  it("aborts the upstream fetch when the client disconnects mid-stream", async () => {
+    let upstreamSignal: AbortSignal | undefined;
+
+    upstreamHandler = (_url, init) => {
+      upstreamSignal = init?.signal ?? undefined;
+      return new Response(
+        new ReadableStream<Uint8Array>({
+          start(controller) {
+            controller.enqueue(
+              encoder.encode(
+                `data: ${JSON.stringify({
+                  id: "chatcmpl_3",
+                  object: "chat.completion.chunk",
+                  choices: [{ index: 0, delta: { role: "assistant", content: "x" }, finish_reason: null }],
+                })}\n\n`,
+              ),
+            );
+          },
+        }),
+        { headers: { "Content-Type": "text/event-stream" } },
+      );
+    };
+
+    await postAndDisconnect(server.port!, {
+      model: "opencode/kimi-k2.6",
+      max_tokens: 64,
+      stream: true,
+      messages: [{ role: "user", content: "hi" }],
+    });
+
+    await waitFor(() => upstreamSignal?.aborted === true, 3000);
+  });
+});
+
+interface ParsedEvent extends SSEMessage {
+  parsed: unknown;
+}
+
+async function collectEvents(response: Response): Promise<ParsedEvent[]> {
+  const events: ParsedEvent[] = [];
+  for await (const message of parseSSE(response.body!)) {
+    if (message.event === "ping") continue;
+    events.push({ ...message, parsed: JSON.parse(message.data) });
+  }
+  return events;
+}
+
+function sseResponse(body: string): Response {
+  return new Response(body, { headers: { "Content-Type": "text/event-stream" } });
+}
+
+async function waitFor(condition: () => boolean, timeoutMs: number): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (!condition()) {
+    if (Date.now() > deadline) throw new Error("Condition not met within timeout");
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
+}
+
+// Bun.serve does not surface client disconnects to fetch()-based clients in the
+// same process (no cancel(), no request.signal abort), so simulate a real TCP
+// client that abandons the connection mid-response.
+async function postAndDisconnect(port: number, body: object): Promise<void> {
+  const { connect } = await import("node:net");
+  return new Promise((resolve) => {
+    const socket = connect(port, "127.0.0.1");
+    const payload = JSON.stringify(body);
+    socket.on("connect", () => {
+      socket.write(
+        `POST /v1/messages HTTP/1.1\r\nHost: 127.0.0.1\r\nContent-Type: application/json\r\nContent-Length: ${Buffer.byteLength(payload)}\r\n\r\n${payload}`,
+      );
+    });
+    socket.on("error", () => {
+      // Connection reset after destroy is expected.
+    });
+    let disconnected = false;
+    const disconnect = () => {
+      if (disconnected) return;
+      disconnected = true;
+      socket.destroy();
+      resolve();
+    };
+    socket.on("data", disconnect);
+    setTimeout(disconnect, 1000);
+  });
+}

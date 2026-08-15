@@ -32,12 +32,11 @@ export interface AnthropicMessage {
 }
 
 export type AnthropicContentBlock =
-  | { type: "text"; text: string; [key: string]: unknown }
-  | { type: "thinking"; thinking?: string; text?: string; signature?: string; [key: string]: unknown }
-  | { type: "image"; source?: AnthropicImageSource; [key: string]: unknown }
-  | { type: "tool_use"; id: string; name: string; input?: unknown; [key: string]: unknown }
-  | { type: "tool_result"; tool_use_id: string; content?: unknown; is_error?: boolean; [key: string]: unknown }
-  | { type: string; [key: string]: unknown };
+  | { type: "text"; text: string }
+  | { type: "thinking"; thinking?: string; text?: string; signature?: string }
+  | { type: "image"; source?: AnthropicImageSource }
+  | { type: "tool_use"; id: string; name: string; input?: unknown }
+  | { type: "tool_result"; tool_use_id: string; content?: unknown; is_error?: boolean };
 
 export interface AnthropicImageSource {
   type?: "base64" | "url";
@@ -51,7 +50,6 @@ export interface AnthropicTool {
   description?: string;
   input_schema?: Record<string, unknown>;
   type?: string;
-  [key: string]: unknown;
 }
 
 export type AnthropicToolChoice =
@@ -60,12 +58,16 @@ export type AnthropicToolChoice =
   | "none"
   | { type: "auto" | "any" | "tool" | "none"; name?: string; disable_parallel_tool_use?: boolean };
 
+export type ResponsesToolChoice = "auto" | "required" | "none" | { type: "function"; name: string };
+
+export type OpenAIToolChoice = "auto" | "none" | "required" | { type: "function"; function: { name: string } };
+
 export interface ResponsesRequest {
   model: string;
   instructions?: string;
   input: ResponsesInputItem[];
   tools?: ResponsesTool[];
-  tool_choice?: unknown;
+  tool_choice?: ResponsesToolChoice;
   max_output_tokens?: number;
   temperature?: number;
   top_p?: number;
@@ -103,14 +105,14 @@ export type ResponsesInputItem =
   | {
       type: "reasoning";
       encrypted_content?: string;
-      summary?: unknown[];
+      summary?: unknown;
       content?: null;
     };
 
 export type ResponsesContentPart =
   | { type: "input_text"; text: string }
   | { type: "output_text"; text: string }
-  | { type: "input_image"; image_url: string };
+  | { type: "input_image"; image_url: string; detail?: string };
 
 export interface ResponsesTool {
   type: "function" | "web_search";
@@ -156,8 +158,7 @@ export type XAIOutputItem =
       type: "message";
       id?: string;
       role?: string;
-      content?: Array<{ type?: string; text?: string; [key: string]: unknown }> | string;
-      [key: string]: unknown;
+      content?: Array<{ type?: string; text?: string }> | string;
     }
   | {
       type: "function_call";
@@ -166,7 +167,6 @@ export type XAIOutputItem =
       name?: string;
       arguments?: string;
       status?: string;
-      [key: string]: unknown;
     }
   | {
       type: "reasoning";
@@ -174,11 +174,6 @@ export type XAIOutputItem =
       encrypted_content?: string;
       summary?: unknown;
       content?: unknown;
-      [key: string]: unknown;
-    }
-  | {
-      type?: string;
-      [key: string]: unknown;
     };
 
 export interface OpenAIChatRequest {
@@ -189,7 +184,7 @@ export interface OpenAIChatRequest {
   temperature?: number;
   top_p?: number;
   stop?: string[];
-  stream: false;
+  stream: boolean;
   tools?: Array<{
     type: "function";
     function: {
@@ -198,10 +193,9 @@ export interface OpenAIChatRequest {
       parameters?: Record<string, unknown>;
     };
   }>;
-  tool_choice?: unknown;
+  tool_choice?: OpenAIToolChoice;
   effort?: string;
   reasoning_effort?: string;
-  [key: string]: unknown;
 }
 
 export type OpenAIChatMessage =
@@ -209,6 +203,7 @@ export type OpenAIChatMessage =
       role: "system" | "user" | "assistant";
       content: string | Array<Record<string, unknown>> | null;
       tool_calls?: OpenAIChatToolCall[];
+      reasoning_content?: string;
     }
   | {
       role: "tool";
@@ -256,12 +251,10 @@ export interface OAuthTokenFile {
   type: "xai";
   auth_kind: "oauth";
   access_token: string;
-  refresh_token?: string;
   id_token?: string;
   token_type?: string;
   expires_in?: number;
   expires_at?: number;
-  expired?: string;
   token_endpoint?: string;
   base_url?: string;
   email?: string;

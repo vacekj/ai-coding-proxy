@@ -44,7 +44,7 @@ describe("sanitizeAnthropicRequest", () => {
       ],
     });
 
-    const block = firstContentBlock(result);
+    const block = firstContentBlock(result) as AnthropicContentBlock & { content?: unknown } | undefined;
     expect(block?.type).toBe("tool_result");
     expect(String(block?.content)).toContain("large tool result truncated by proxy");
     expect(String(block?.content).length).toBeLessThan(500);

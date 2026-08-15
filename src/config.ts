@@ -2,15 +2,10 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 
 export const XAI_CLIENT_ID = "b1a00492-073a-47ea-816f-4c329264a828";
-export const XAI_SCOPE = "openid profile email offline_access grok-cli:access api:access";
-export const XAI_DISCOVERY_URL = "https://auth.x.ai/.well-known/openid-configuration";
 export const GROK_CLI_DEFAULT_API_BASE_URL = "https://cli-chat-proxy.grok.com/v1";
 export const OPENCODE_ZEN_OPENAI_BASE_URL = "https://opencode.ai/zen/v1/chat/completions";
 export const OPENCODE_ZEN_ANTHROPIC_BASE_URL = "https://opencode.ai/zen/v1/messages";
 export const CLINE_API_BASE_URL = "https://api.cline.bot";
-export const XAI_REDIRECT_HOST = "127.0.0.1";
-export const XAI_REDIRECT_PATH = "/callback";
-export const XAI_CALLBACK_PORT = 56121;
 export const GROK_CLI_CLIENT_VERSION = "0.2.16";
 
 export function expandHome(path: string): string {
@@ -50,12 +45,12 @@ export function clineApiBaseUrl(): string {
 export function clineChatCompletionsUrl(): string {
   const base = clineApiBaseUrl();
   if (base.endsWith("/chat/completions")) return base;
-  if (base.endsWith("/api/v1")) return `${base}/chat/completions`;
   return `${base}/api/v1/chat/completions`;
 }
 
 export function clineRefreshUrl(): string {
   const base = clineApiBaseUrl();
+  if (base.endsWith("/chat/completions")) return `${base.slice(0, -"/chat/completions".length)}/auth/refresh`;
   if (base.endsWith("/api/v1")) return `${base}/auth/refresh`;
   return `${base}/api/v1/auth/refresh`;
 }
@@ -74,7 +69,7 @@ export function opencodeAnthropicBaseUrl(): string {
   return (process.env.OPENCODE_ANTHROPIC_BASE_URL ?? OPENCODE_ZEN_ANTHROPIC_BASE_URL).replace(/\/+$/, "");
 }
 
-export function apiBaseUrl(): string {
+export function grokApiBaseUrl(): string {
   return (
     process.env.GROK_PROXY_BASE_URL ??
     process.env.GROK_CLI_BASE_URL ??
@@ -111,25 +106,27 @@ export function streamPingMs(): number {
   return positiveIntEnv("PROXY_STREAM_PING_MS", 4_000);
 }
 
-export function oauthCallbackPort(): number {
-  return portEnv("XAI_OAUTH_CALLBACK_PORT", XAI_CALLBACK_PORT);
-}
-
-function portEnv(name: string, fallback: number): number {
-  const raw = process.env[name] ?? String(fallback);
-  const port = Number.parseInt(raw, 10);
-  if (!Number.isFinite(port) || port <= 0 || port > 65535) {
+function intEnv(name: string, fallback: number): number {
+  const raw = process.env[name];
+  if (raw == null || raw.trim() === "") return fallback;
+  if (!/^\d+$/.test(raw.trim())) {
     throw new Error(`Invalid ${name}: ${raw}`);
   }
-  return port;
+  const value = Number(raw.trim());
+  if (!Number.isFinite(value) || value <= 0) {
+    throw new Error(`Invalid ${name}: ${raw}`);
+  }
+  return value;
 }
 
 function positiveIntEnv(name: string, fallback: number): number {
-  const raw = process.env[name];
-  if (raw == null || raw.trim() === "") return fallback;
-  const value = Number.parseInt(raw, 10);
-  if (!Number.isFinite(value) || value <= 0) {
-    throw new Error(`Invalid ${name}: ${raw}`);
+  return intEnv(name, fallback);
+}
+
+function portEnv(name: string, fallback: number): number {
+  const value = intEnv(name, fallback);
+  if (value > 65535) {
+    throw new Error(`Invalid ${name}: ${process.env[name] ?? String(fallback)}`);
   }
   return value;
 }

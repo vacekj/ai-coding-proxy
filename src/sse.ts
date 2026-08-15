@@ -3,30 +3,55 @@ export interface SSEMessage {
   data: string;
 }
 
-export async function* parseSSE(stream: ReadableStream<Uint8Array>): AsyncGenerator<SSEMessage> {
+const EVENT_BOUNDARY = /\r\n\r\n|\n\n/;
+
+export async function* parseSSE(
+  stream: ReadableStream<Uint8Array>,
+  signal?: AbortSignal,
+): AsyncGenerator<SSEMessage> {
   const reader = stream.getReader();
   const decoder = new TextDecoder();
   let buffer = "";
+
+  const cancelReader = () => {
+    reader.cancel().catch(() => {});
+  };
+
+  if (signal?.aborted) {
+    await cancelReader();
+    return;
+  }
+  signal?.addEventListener("abort", cancelReader, { once: true });
+
   try {
     while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      buffer += decoder.decode(value, { stream: true });
-      let index: number;
-      while ((index = buffer.indexOf("\n\n")) >= 0) {
-        const raw = buffer.slice(0, index);
-        buffer = buffer.slice(index + 2);
+      let readResult: Awaited<ReturnType<typeof reader.read>>;
+      try {
+        readResult = await reader.read();
+      } catch {
+        break;
+      }
+      if (readResult.done) break;
+      buffer += decoder.decode(readResult.value, { stream: true });
+      while (true) {
+        const match = EVENT_BOUNDARY.exec(buffer);
+        if (!match || match.index === undefined) break;
+        const raw = buffer.slice(0, match.index);
+        buffer = buffer.slice(match.index + match[0].length);
         const message = parseSSEBlock(raw);
         if (message) yield message;
       }
     }
     buffer += decoder.decode();
-    if (buffer.trim()) {
-      const message = parseSSEBlock(buffer);
-      if (message) yield message;
-    }
+    const message = parseSSEBlock(buffer);
+    if (message) yield message;
   } finally {
-    reader.releaseLock();
+    signal?.removeEventListener("abort", cancelReader);
+    try {
+      reader.releaseLock();
+    } catch {
+      // Reader already released or cancelled.
+    }
   }
 }
 

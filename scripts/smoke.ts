@@ -1,7 +1,7 @@
 import { collectXAIResponse } from "../src/anthropic-stream";
 import {
   GROK_CLI_CLIENT_VERSION,
-  apiBaseUrl,
+  grokApiBaseUrl,
   serverHost,
   serverPort,
   upstreamModel,
@@ -18,7 +18,7 @@ const expiresAt = token.expires_at ? new Date(token.expires_at * 1000).toISOStri
 console.log(`   ok: token loaded, expires ${expiresAt}`);
 
 console.log("2. Calling Grok CLI Responses API directly");
-const upstream = await fetch(`${apiBaseUrl()}/responses`, {
+const upstream = await fetch(`${grokApiBaseUrl()}/responses`, {
   method: "POST",
   headers: {
     "Content-Type": "application/json",

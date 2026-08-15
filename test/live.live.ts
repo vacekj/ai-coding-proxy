@@ -2,7 +2,7 @@ import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import { collectXAIResponse } from "../src/anthropic-stream";
 import {
   GROK_CLI_CLIENT_VERSION,
-  apiBaseUrl,
+  grokApiBaseUrl,
   upstreamModel,
 } from "../src/config";
 import { loadOAuthToken } from "../src/oauth";
@@ -272,7 +272,7 @@ describe("live OpenCode Zen proxy", () => {
 
 async function directXAIResponses(body: Record<string, unknown>): Promise<XAIResponse> {
   const sessionId = makeSessionId();
-  const response = await fetch(`${apiBaseUrl()}/responses`, {
+  const response = await fetch(`${grokApiBaseUrl()}/responses`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",

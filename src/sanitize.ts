@@ -3,6 +3,7 @@ import {
   maxRequestChars,
   maxToolResultChars,
 } from "./config";
+import { toolResultText } from "./util";
 import type {
   AnthropicContentBlock,
   AnthropicMessage,
@@ -25,6 +26,9 @@ export interface SanitizeOptions {
   maxRequestChars?: number;
 }
 
+const HEAD_RATIO = 0.65;
+const TAIL_RATIO = 0.35;
+
 export function sanitizeAnthropicRequest(
   input: AnthropicMessageRequest,
   options: SanitizeOptions = {},
@@ -37,17 +41,15 @@ export function sanitizeAnthropicRequest(
     sanitizedChars: 0,
   };
 
-  const request: AnthropicMessageRequest = {
-    ...input,
-    messages: (input.messages ?? []).map((message) =>
-      sanitizeMessage(message, maxToolResultChars(), stats),
-    ),
-  };
+  const truncated = new Set<AnthropicContentBlock>();
+  const messages = (input.messages ?? []).map((message) =>
+    sanitizeMessage(message, maxToolResultChars(), stats, truncated),
+  );
+  const request: AnthropicMessageRequest = { ...input, messages };
 
   let nextLength = serializedLength(request);
   if (nextLength > requestCharLimit) {
-    compactOldToolResults(request, requestCharLimit, stats);
-    nextLength = serializedLength(request);
+    nextLength = compactOldToolResults(request, requestCharLimit, stats, truncated, nextLength);
   }
 
   stats.sanitizedChars = nextLength;
@@ -58,6 +60,7 @@ function sanitizeMessage(
   message: AnthropicMessage,
   limit: number,
   stats: SanitizeStats,
+  truncated: Set<AnthropicContentBlock>,
 ): AnthropicMessage {
   if (typeof message.content === "string") return { ...message };
 
@@ -65,7 +68,9 @@ function sanitizeMessage(
     ...message,
     content: message.content.map((block) => {
       if (block.type !== "tool_result") return block;
-      return sanitizeToolResult(block, limit, false, stats);
+      const next = clampToolResult(block, limit, "large tool result truncated by proxy", stats, true);
+      if (next !== block) truncated.add(next);
+      return next;
     }),
   };
 }
@@ -74,60 +79,48 @@ function compactOldToolResults(
   request: AnthropicMessageRequest,
   requestCharLimit: number,
   stats: SanitizeStats,
-): void {
-  const messages = request.messages ?? [];
+  truncated: Set<AnthropicContentBlock>,
+  startLength: number,
+): number {
+  let length = startLength;
 
-  for (const message of messages) {
-    if (serializedLength(request) <= requestCharLimit) return;
+  for (const message of request.messages ?? []) {
+    if (length <= requestCharLimit) break;
     if (typeof message.content === "string") continue;
 
-    message.content = message.content.map((block) => {
-      if (serializedLength(request) <= requestCharLimit) return block;
-      if (block.type !== "tool_result") return block;
-      return sanitizeToolResult(block, compactedToolResultChars(), true, stats);
-    });
+    for (let i = 0; i < message.content.length; i++) {
+      if (length <= requestCharLimit) break;
+      const block = message.content[i];
+      if (block.type !== "tool_result" || truncated.has(block)) continue;
+
+      const next = clampToolResult(block, compactedToolResultChars(), "older tool result compacted by proxy", stats, false);
+      if (next === block) continue;
+      message.content[i] = next;
+      length += serializedLength(next) - serializedLength(block);
+    }
   }
+
+  return length;
 }
 
-function sanitizeToolResult(
+function clampToolResult(
   block: AnthropicContentBlock,
   limit: number,
-  compacted: boolean,
+  notice: string,
   stats: SanitizeStats,
+  countAsTruncated: boolean,
 ): AnthropicContentBlock {
   if (block.type !== "tool_result") return block;
   const text = toolResultText(block.content);
   if (text.length <= limit) return block;
 
-  if (compacted) stats.compactedToolResults += 1;
-  else stats.truncatedToolResults += 1;
+  if (countAsTruncated) stats.truncatedToolResults += 1;
+  else stats.compactedToolResults += 1;
 
   return {
     ...block,
-    content: truncateMiddle(
-      text,
-      limit,
-      compacted
-        ? "older tool result compacted by proxy"
-        : "large tool result truncated by proxy",
-    ),
+    content: truncateMiddle(text, limit, notice),
   };
-}
-
-function toolResultText(content: unknown): string {
-  if (typeof content === "string") return content;
-  if (Array.isArray(content)) {
-    return content
-      .map((item) => {
-        if (typeof item === "string") return item;
-        if (isRecord(item) && typeof item.text === "string") return item.text;
-        return "";
-      })
-      .filter(Boolean)
-      .join("\n");
-  }
-  if (content == null) return "";
-  return JSON.stringify(content);
 }
 
 function truncateMiddle(text: string, limit: number, reason: string): string {
@@ -135,15 +128,11 @@ function truncateMiddle(text: string, limit: number, reason: string): string {
   const bodyLimit = Math.max(0, limit - notice.length);
   if (bodyLimit <= 0) return notice.trim();
 
-  const headChars = Math.ceil(bodyLimit * 0.65);
-  const tailChars = Math.floor(bodyLimit * 0.35);
+  const headChars = Math.ceil(bodyLimit * HEAD_RATIO);
+  const tailChars = Math.floor(bodyLimit * TAIL_RATIO);
   return text.slice(0, headChars) + notice + text.slice(Math.max(headChars, text.length - tailChars));
 }
 
 function serializedLength(value: unknown): number {
   return JSON.stringify(value).length;
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
 }

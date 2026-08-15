@@ -16,8 +16,9 @@ import {
   defaultOpenCodeModel,
   fetchOpenCodeMessage,
   isOpenCodeModel,
-  openCodeModels,
+  opencodeModels,
   resolveOpenCodeModel,
+  streamOpenCodeMessage,
 } from "./opencode";
 import {
   clineModels,
@@ -26,6 +27,7 @@ import {
   fetchClineMessage,
   isClineModel,
   resolveClineModel,
+  streamClineMessage,
 } from "./cline";
 import { estimateAnthropicInputTokens, anthropicToResponses } from "./translate";
 import { sanitizeAnthropicRequest } from "./sanitize";
@@ -128,36 +130,42 @@ async function handleMessages(request: Request): Promise<Response> {
   logSanitization(stats);
 
   if (route === "cline") {
-    return respondWithMessage(fetchClineMessage(body, { signal: request.signal }), body.stream);
+    if (body.stream) {
+      return sseResponse(streamClineMessage(body, { signal: request.signal }));
+    }
+    return respondWithMessage(fetchClineMessage(body, { signal: request.signal }));
   }
 
   if (route === "opencode") {
-    return respondWithMessage(fetchOpenCodeMessage(body, { signal: request.signal }), body.stream);
+    if (body.stream) {
+      return sseResponse(streamOpenCodeMessage(body, { signal: request.signal }));
+    }
+    return respondWithMessage(fetchOpenCodeMessage(body, { signal: request.signal }));
   }
 
   const translation = anthropicToResponses(body);
   const sessionId = requestSessionId(request);
+  const abortable = makeAbortable(request);
 
   if (body.stream) {
     const messagePromise = fetchXAIResponses(translation, {
       sessionId,
-      signal: request.signal,
+      signal: abortable.signal,
     }).then((upstream) =>
       xaiResponseToAnthropicMessage(upstream, translation.clientModel, translation.reverseToolNameMap),
     );
 
-    return new Response(anthropicMessageToSSEStream(messagePromise), {
-      headers: {
-        "Content-Type": "text/event-stream; charset=utf-8",
-        "Cache-Control": "no-cache",
-        Connection: "keep-alive",
-      },
-    });
+    return sseResponse(
+      anthropicMessageToSSEStream(messagePromise, {
+        signal: abortable.signal,
+        abort: abortable.abort,
+      }),
+    );
   }
 
   const upstream = await fetchXAIResponses(translation, {
     sessionId,
-    signal: request.signal,
+    signal: abortable.signal,
   });
   const message = await xaiResponseToAnthropicMessage(
     upstream,
@@ -165,6 +173,26 @@ async function handleMessages(request: Request): Promise<Response> {
     translation.reverseToolNameMap,
   );
   return json(message);
+}
+
+function sseResponse(stream: ReadableStream<Uint8Array>): Response {
+  return new Response(stream, {
+    headers: {
+      "Content-Type": "text/event-stream; charset=utf-8",
+      "Cache-Control": "no-cache",
+      Connection: "keep-alive",
+    },
+  });
+}
+
+function makeAbortable(request: Request): { signal: AbortSignal; abort: () => void } {
+  const controller = new AbortController();
+  if (request.signal.aborted) {
+    controller.abort();
+  } else {
+    request.signal.addEventListener("abort", () => controller.abort(), { once: true });
+  }
+  return { signal: controller.signal, abort: () => controller.abort() };
 }
 
 function requestSessionId(request: Request): string {
@@ -210,25 +238,15 @@ function json(value: unknown, init: ResponseInit = {}): Response {
 
 function respondWithMessage(
   messagePromise: Promise<import("./translate").AnthropicMessage>,
-  stream: boolean | undefined,
-): Response | Promise<Response> {
-  if (stream) {
-    return new Response(anthropicMessageToSSEStream(messagePromise), {
-      headers: {
-        "Content-Type": "text/event-stream; charset=utf-8",
-        "Cache-Control": "no-cache",
-        Connection: "keep-alive",
-      },
-    });
-  }
+): Promise<Response> {
   return messagePromise.then((message) => json(message));
 }
 
 function modelsList() {
   const grokModel = modelDetails(upstreamModel());
-  const opencodeModels = openCodeModels().map((model) => modelDetails(`opencode/${model.id}`));
+  const opencodeModelDetails = opencodeModels().map((model) => modelDetails(`opencode/${model.id}`));
   const clineModelDetails = clineModels().map((model) => modelDetails(`cline/${model.id}`));
-  const data = [grokModel, ...opencodeModels, ...clineModelDetails];
+  const data = [grokModel, ...opencodeModelDetails, ...clineModelDetails];
   return {
     data,
     has_more: false,

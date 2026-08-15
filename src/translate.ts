@@ -1,13 +1,23 @@
 import { upstreamModel } from "./config";
+import {
+  anthropicImageToDataURL,
+  clampEffort,
+  isRecord,
+  makeToolId,
+  parseToolArguments,
+  sanitizeClaudeToolID,
+  systemText,
+  toResponsesToolName,
+} from "./util";
 import type {
   AnthropicContentBlock,
-  AnthropicImageSource,
   AnthropicMessageRequest,
   AnthropicTool,
   ResponsesContentPart,
   ResponsesInputItem,
   ResponsesRequest,
   ResponsesTool,
+  ResponsesToolChoice,
   XAIOutputItem,
   XAIResponse,
 } from "./types";
@@ -138,10 +148,11 @@ export function anthropicToResponses(input: AnthropicMessageRequest): Translatio
           break;
         }
         default: {
-          if ("text" in part && typeof part.text === "string") {
+          const unknown = part as { text?: unknown };
+          if (typeof unknown.text === "string") {
             pendingParts.push({
               type: role === "assistant" ? "output_text" : "input_text",
-              text: part.text,
+              text: unknown.text,
             });
           }
         }
@@ -151,7 +162,6 @@ export function anthropicToResponses(input: AnthropicMessageRequest): Translatio
   }
 
   const tools = convertTools(input.tools ?? [], toolNameMap);
-  request.tools = tools;
   if (tools.length > 0) {
     request.tools = tools;
     request.tool_choice = convertToolChoice(input.tool_choice, toolNameMap);
@@ -267,20 +277,6 @@ export function estimateAnthropicInputTokens(request: AnthropicMessageRequest): 
   return Math.max(1, Math.ceil(text.length / 4));
 }
 
-function systemText(system: AnthropicMessageRequest["system"]): string {
-  if (!system) return "";
-  if (typeof system === "string") {
-    return system.trim();
-  }
-  const parts: string[] = [];
-  for (const part of system) {
-    if (part.type === "text" && typeof part.text === "string") {
-      parts.push(part.text);
-    }
-  }
-  return parts.map((part) => part.trim()).filter(Boolean).join("\n\n");
-}
-
 function appendMessage(
   input: ResponsesInputItem[],
   role: "user" | "assistant",
@@ -288,17 +284,6 @@ function appendMessage(
 ): void {
   if (content.length === 0) return;
   input.push({ type: "message", role, content });
-}
-
-function anthropicImageToDataURL(part: AnthropicContentBlock): string | undefined {
-  if (part.type !== "image" || !part.source) return undefined;
-  const source = part.source as AnthropicImageSource;
-  if (source.type === "url" && source.url) return source.url;
-  if (source.data) {
-    const mediaType = source.media_type ?? "application/octet-stream";
-    return `data:${mediaType};base64,${source.data}`;
-  }
-  return undefined;
 }
 
 function toolResultOutput(content: unknown): string | ResponsesContentPart[] {
@@ -341,7 +326,10 @@ function convertTools(tools: AnthropicTool[], nameMap: Map<string, string>): Res
   return out;
 }
 
-function convertToolChoice(choice: AnthropicMessageRequest["tool_choice"], nameMap: Map<string, string>): unknown {
+function convertToolChoice(
+  choice: AnthropicMessageRequest["tool_choice"],
+  nameMap: Map<string, string>,
+): ResponsesToolChoice {
   if (!choice) return "auto";
   if (typeof choice === "string") {
     if (choice === "any") return "required";
@@ -376,13 +364,6 @@ function reasoningEffort(input: AnthropicMessageRequest): string | undefined {
   return "low";
 }
 
-function clampEffort(value: string): string {
-  if (value === "none" || value === "minimal") return "low";
-  if (value === "xhigh" || value === "max") return "high";
-  if (value === "low" || value === "medium" || value === "high") return value;
-  return "medium";
-}
-
 function normalizeSchema(schema: unknown): Record<string, unknown> {
   if (!isRecord(schema)) return { type: "object", properties: {} };
   const out = { ...schema };
@@ -408,13 +389,6 @@ function buildToolNameMap(tools: AnthropicTool[]): Map<string, string> {
   return map;
 }
 
-export function toResponsesToolName(name: string): string {
-  const cleaned = (name || "tool").replace(/[^a-zA-Z0-9_-]/g, "_");
-  if (cleaned.length <= 64) return cleaned || "tool";
-  const suffix = `_${hashCode(cleaned).toString(36)}`;
-  return cleaned.slice(0, Math.max(1, 64 - suffix.length)) + suffix;
-}
-
 function preferredGrokToolName(name: string, used: Set<string>): string {
   const aliases: Record<string, string> = {
     Bash: "Shell",
@@ -431,23 +405,6 @@ function supportsReasoningEffort(model: string): boolean {
     name.startsWith("grok-4.20-multi-agent") ||
     name.startsWith("grok-4.3")
   );
-}
-
-export function sanitizeClaudeToolID(id: string): string {
-  const cleaned = id.replace(/[^a-zA-Z0-9_-]/g, "_");
-  return cleaned || makeToolId();
-}
-
-function makeToolId(): string {
-  return `toolu_${crypto.randomUUID().replaceAll("-", "")}`;
-}
-
-function hashCode(text: string): number {
-  let hash = 5381;
-  for (let i = 0; i < text.length; i++) {
-    hash = (hash * 33) ^ text.charCodeAt(i);
-  }
-  return hash >>> 0;
 }
 
 function messageTexts(item: XAIOutputItem): string[] {
@@ -484,18 +441,4 @@ function collectText(value: unknown, out: string[]): void {
     if (typeof value.text === "string") out.push(value.text);
     else if (typeof value.summary_text === "string") out.push(value.summary_text);
   }
-}
-
-function parseToolArguments(raw: unknown): Record<string, unknown> {
-  if (typeof raw !== "string" || !raw.trim()) return {};
-  try {
-    const parsed = JSON.parse(raw) as unknown;
-    return isRecord(parsed) ? parsed : {};
-  } catch {
-    return {};
-  }
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
 }

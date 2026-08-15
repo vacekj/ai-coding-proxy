@@ -1,6 +1,6 @@
 import {
   GROK_CLI_CLIENT_VERSION,
-  apiBaseUrl,
+  grokApiBaseUrl,
   upstreamModel,
 } from "./config";
 import { loadOAuthToken } from "./oauth";
@@ -26,7 +26,7 @@ export async function fetchXAIResponses(
     prompt_cache_key: translation.request.prompt_cache_key ?? sessionId,
   });
 
-  const response = await fetch(`${apiBaseUrl()}/responses`, {
+  const response = await fetch(`${grokApiBaseUrl()}/responses`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
