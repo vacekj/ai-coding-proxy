@@ -1,7 +1,7 @@
 {
   "name": "ai-coding-proxy",
   "version": "0.1.0",
-  "description": "Local Anthropic Messages API proxy for Claude Code, Grok Composer, OpenCode Zen, and ClinePass.",
+  "description": "Local Anthropic Messages API proxy for Claude Code, Grok Composer, and OpenCode Zen.",
   "license": "MIT",
   "private": false,
   "type": "module",
@@ -16,8 +16,6 @@
   "keywords": [
     "anthropic",
     "claude-code",
-    "cline",
-    "clinepass",
     "grok",
     "opencode",
     "proxy",
@@ -29,7 +27,6 @@
     "start": "bun run src/server.ts",
     "login": "grok login --oauth",
     "smoke": "bun run scripts/smoke.ts",
-    "smoke:cline": "bun run scripts/smoke-cline.ts",
     "test": "bun test",
     "test:live": "bun test ./test/live.live.ts",
     "typecheck": "bunx tsc --noEmit"

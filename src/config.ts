@@ -5,7 +5,6 @@ export const XAI_CLIENT_ID = "b1a00492-073a-47ea-816f-4c329264a828";
 export const GROK_CLI_DEFAULT_API_BASE_URL = "https://cli-chat-proxy.grok.com/v1";
 export const OPENCODE_ZEN_OPENAI_BASE_URL = "https://opencode.ai/zen/v1/chat/completions";
 export const OPENCODE_ZEN_ANTHROPIC_BASE_URL = "https://opencode.ai/zen/v1/messages";
-export const CLINE_API_BASE_URL = "https://api.cline.bot";
 export const GROK_CLI_CLIENT_VERSION = "0.2.16";
 
 export function expandHome(path: string): string {
@@ -28,37 +27,6 @@ export function opencodeDefaultModel(): string {
 
 export function opencodeApiKey(): string | undefined {
   return process.env.OPENCODE_API_KEY?.trim() || undefined;
-}
-
-export function clineDefaultModel(): string {
-  return process.env.CLINE_PROXY_MODEL ?? "kimi-k3";
-}
-
-export function clineApiKey(): string | undefined {
-  return process.env.CLINE_API_KEY?.trim() || undefined;
-}
-
-export function clineApiBaseUrl(): string {
-  return (process.env.CLINE_API_BASE ?? CLINE_API_BASE_URL).replace(/\/+$/, "");
-}
-
-export function clineChatCompletionsUrl(): string {
-  const base = clineApiBaseUrl();
-  if (base.endsWith("/chat/completions")) return base;
-  return `${base}/api/v1/chat/completions`;
-}
-
-export function clineRefreshUrl(): string {
-  const base = clineApiBaseUrl();
-  if (base.endsWith("/chat/completions")) return `${base.slice(0, -"/chat/completions".length)}/auth/refresh`;
-  if (base.endsWith("/api/v1")) return `${base}/auth/refresh`;
-  return `${base}/api/v1/auth/refresh`;
-}
-
-export function clineProvidersFilePath(): string {
-  return expandHome(
-    process.env.CLINE_PROVIDERS_FILE ?? join(homedir(), ".cline", "data", "settings", "providers.json"),
-  );
 }
 
 export function opencodeOpenAIBaseUrl(): string {

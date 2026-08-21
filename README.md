@@ -9,15 +9,13 @@ It supports:
 
 - **Grok Composer** through Grok CLI OAuth, using `grok-composer-2.5-fast`
 - **OpenCode Zen** through Zen model IDs such as `opencode/mimo-v2.5-free`
-- **ClinePass** through model IDs such as `cline/kimi-k3` (API key or `cline auth` OAuth)
 
-The proxy does not accept API keys from local clients and does not implement its own OAuth flow. For Grok, it only reads the token created by `grok login --oauth`. For ClinePass, it accepts `CLINE_API_KEY` or reuses WorkOS tokens from `cline auth`.
+The proxy does not accept API keys from local clients and does not implement its own OAuth flow. For Grok, it only reads the token created by `grok login --oauth`.
 
 ## When to use this
 
-- You want to use [Claude Code](https://docs.anthropic.com/en/docs/claude-code/overview) but route to a non-Anthropic model (Grok, OpenCode Zen, ClinePass) for cost or experimentation.
+- You want to use [Claude Code](https://docs.anthropic.com/en/docs/claude-code/overview) but route to a non-Anthropic model (Grok, OpenCode Zen) for cost or experimentation.
 - You want OpenCode Zen's free model tier working inside Claude Code without a Zen API key.
-- You want ClinePass models (including Kimi K3) inside Claude Code via a local Anthropic-compatible endpoint.
 - You want a single local endpoint that can talk to multiple backends, switching by model name.
 
 ## When *not* to use this
@@ -90,46 +88,6 @@ curl http://127.0.0.1:8317/v1/models
 
 The proxy accepts both `opencode/<model-id>` and raw Zen model IDs.
 
-## ClinePass
-
-[ClinePass](https://docs.cline.bot/getting-started/clinepass) models are available from the same local server with a `cline/` prefix. Auth is either:
-
-1. **API key** (recommended for scripts): create one at [app.cline.bot](https://app.cline.bot) → Settings → API Keys, set `CLINE_API_KEY`
-2. **Cline CLI OAuth**: run `cline auth`, select ClinePass; the proxy reads and refreshes tokens from `~/.cline/data/settings/providers.json`
-
-```bash
-# Option A: static API key
-export CLINE_API_KEY=...
-
-# Option B: reuse `cline auth` (no CLINE_API_KEY needed)
-
-export ANTHROPIC_BASE_URL=http://127.0.0.1:8317
-export ANTHROPIC_MODEL=cline/kimi-k3
-export ANTHROPIC_DEFAULT_SONNET_MODEL=cline/kimi-k3
-export ANTHROPIC_DEFAULT_OPUS_MODEL=cline/kimi-k3
-export ANTHROPIC_API_KEY=not-needed
-export ANTHROPIC_AUTH_TOKEN=not-needed
-claude
-```
-
-Known ClinePass IDs:
-
-| Claude Code model ID | Upstream Cline model |
-| --- | --- |
-| `cline/kimi-k3` | `cline-pass/kimi-k3` |
-| `cline/kimi-k2.7-code` | `cline-pass/kimi-k2.7-code` |
-| `cline/kimi-k2.6` | `cline-pass/kimi-k2.6` |
-| `cline/glm-5.2` | `cline-pass/glm-5.2` |
-| `cline/deepseek-v4-pro` | `cline-pass/deepseek-v4-pro` |
-| `cline/deepseek-v4-flash` | `cline-pass/deepseek-v4-flash` |
-| `cline/mimo-v2.5` | `cline-pass/mimo-v2.5` |
-| `cline/mimo-v2.5-pro` | `cline-pass/mimo-v2.5-pro` |
-| `cline/minimax-m3` | `cline-pass/minimax-m3` |
-| `cline/qwen3.7-max` | `cline-pass/qwen3.7-max` |
-| `cline/qwen3.7-plus` | `cline-pass/qwen3.7-plus` |
-
-Aliases `clinepass/...` and `cline-pass/...` are also accepted. Kimi K3 is slow and always runs at max reasoning; prefer `cline/kimi-k2.7-code` or `cline/deepseek-v4-flash` for snappier agent loops. ClinePass is a flat monthly subscription with 5-hour / weekly / monthly usage windows — see the [ClinePass docs](https://docs.cline.bot/getting-started/clinepass).
-
 ## Configuration
 
 Copy `.env.example` if you want a local starting point:
@@ -151,11 +109,7 @@ The app reads environment variables directly; use your shell, direnv, or another
 | `OPENCODE_PROXY_MODEL` | `mimo-v2.5-free` | Default Zen model when `PROXY_PROVIDER=opencode` |
 | `OPENCODE_OPENAI_BASE_URL` | `https://opencode.ai/zen/v1/chat/completions` | Zen OpenAI-compatible endpoint |
 | `OPENCODE_ANTHROPIC_BASE_URL` | `https://opencode.ai/zen/v1/messages` | Zen Anthropic Messages endpoint |
-| `CLINE_API_KEY` | unset | Cline API key from app.cline.bot (preferred over OAuth for external tools) |
-| `CLINE_PROXY_MODEL` | `kimi-k3` | Default ClinePass model when `PROXY_PROVIDER=cline` |
-| `CLINE_API_BASE` | `https://api.cline.bot` | Cline API base URL |
-| `CLINE_PROVIDERS_FILE` | `~/.cline/data/settings/providers.json` | Cline CLI providers file for WorkOS OAuth reuse |
-| `PROXY_PROVIDER` | unset | Set to `opencode` or `cline` to route unrecognized model names to that provider |
+| `PROXY_PROVIDER` | unset | Set to `opencode` to route unrecognized model names there |
 | `PROXY_MAX_TOOL_RESULT_CHARS` | `24000` | Max characters kept from a single `tool_result` before head/tail truncation |
 | `PROXY_MAX_REQUEST_CHARS` | `200000` | Approximate serialized Anthropic request budget before older tool results are compacted harder |
 | `PROXY_COMPACTED_TOOL_RESULT_CHARS` | `4000` | Max characters kept for older tool results during whole-request compaction |
@@ -177,7 +131,7 @@ If a client or network path closes long streaming requests, increase `PROXY_IDLE
 ## Local Endpoints
 
 - `GET /health` returns current proxy settings.
-- `GET /v1/models` lists Grok, known OpenCode Zen, and ClinePass model IDs.
+- `GET /v1/models` lists Grok and known OpenCode Zen model IDs.
 - `POST /v1/messages` handles Anthropic-compatible message requests.
 - `POST /anthropic/v1/messages` is an alias for clients that include the Anthropic prefix.
 - `POST /v1/messages/count_tokens` returns the proxy's rough token estimate and sanitization stats.
@@ -195,21 +149,16 @@ Live checks against real upstream services:
 
 ```bash
 bun run smoke
-bun run smoke:cline
 bun run test:live
 ```
 
 `bun run smoke` expects the proxy to already be running. It loads the Grok CLI token from `~/.grok/auth.json`, sends one direct request to the Grok CLI Responses API, then sends one request through the local Anthropic-compatible proxy.
 
-`bun run smoke:cline` starts a temporary local proxy, authenticates with `CLINE_API_KEY` or `cline auth` OAuth, and runs a real ClinePass text + tool-call round trip (default model `cline/kimi-k3`).
-
-`bun run test:live` starts a local proxy on port `8329`, sends real requests to Grok Composer, ClinePass, and OpenCode Zen, asks for real tool calls, executes `pwd`, and feeds the real tool result back through the proxy.
+`bun run test:live` starts a local proxy on port `8329`, sends real requests to Grok Composer and OpenCode Zen, asks for real tool calls, executes `pwd`, and feeds the real tool result back through the proxy.
 
 ## Notes
 
-- Grok credentials are separate from OpenCode Zen and ClinePass credentials.
-- Keep `CLINE_API_KEY` in your shell, secret manager, or ignored local env file. Do not commit real keys.
-- If Cline OAuth tokens expire and refresh fails, re-run `cline auth` (or set `CLINE_API_KEY`).
+- Grok credentials are separate from OpenCode Zen credentials.
 - If Grok credentials are missing or expired, run `bun run login`.
 - Local proxy clients are unauthenticated, so keep the default `HOST=127.0.0.1` unless you intentionally want to expose it.
 

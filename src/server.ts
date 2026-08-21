@@ -20,15 +20,6 @@ import {
   resolveOpenCodeModel,
   streamOpenCodeMessage,
 } from "./opencode";
-import {
-  clineModels,
-  clineRequestCharLimit,
-  defaultClineModel,
-  fetchClineMessage,
-  isClineModel,
-  resolveClineModel,
-  streamClineMessage,
-} from "./cline";
 import { estimateAnthropicInputTokens, anthropicToResponses } from "./translate";
 import { sanitizeAnthropicRequest } from "./sanitize";
 import type { AnthropicMessageRequest } from "./types";
@@ -52,10 +43,8 @@ const server = Bun.serve({
           default_provider: "grok",
           grok_model: upstreamModel(),
           opencode_model: defaultOpenCodeModel().id,
-          cline_model: defaultClineModel().id,
           max_tool_result_chars: maxToolResultChars(),
           max_request_chars: maxRequestChars(),
-          cline_request_char_limits: clineRequestCharLimits(),
           compacted_tool_result_chars: compactedToolResultChars(),
           idle_timeout_seconds: serverIdleTimeoutSeconds(),
           stream_ping_ms: streamPingMs(),
@@ -73,9 +62,7 @@ const server = Bun.serve({
       if (request.method === "POST" && url.pathname === "/v1/messages/count_tokens") {
         const body = (await request.json()) as AnthropicMessageRequest;
         const route = routeProvider(body.model);
-        const sanitized = sanitizeAnthropicRequest(body, {
-          maxRequestChars: requestCharLimitForRoute(route, body.model),
-        });
+        const sanitized = sanitizeAnthropicRequest(body, {});
         return json({
           input_tokens: estimateAnthropicInputTokens(sanitized.request),
           original_input_tokens: estimateAnthropicInputTokens(body),
@@ -119,22 +106,12 @@ const server = Bun.serve({
 console.log(`AI Coding Proxy listening on http://${host}:${server.port}`);
 console.log(`Using Grok CLI credentials from ~/.grok/auth.json and model ${upstreamModel()}`);
 console.log(`OpenCode Zen models are available in the same server; default ${defaultOpenCodeModel().id}`);
-console.log(`ClinePass models are available in the same server; default ${defaultClineModel().id}`);
 
 async function handleMessages(request: Request): Promise<Response> {
   const rawBody = (await request.json()) as AnthropicMessageRequest;
   const route = routeProvider(rawBody.model);
-  const { request: body, stats } = sanitizeAnthropicRequest(rawBody, {
-    maxRequestChars: requestCharLimitForRoute(route, rawBody.model),
-  });
+  const { request: body, stats } = sanitizeAnthropicRequest(rawBody, {});
   logSanitization(stats);
-
-  if (route === "cline") {
-    if (body.stream) {
-      return sseResponse(streamClineMessage(body, { signal: request.signal }));
-    }
-    return respondWithMessage(fetchClineMessage(body, { signal: request.signal }));
-  }
 
   if (route === "opencode") {
     if (body.stream) {
@@ -245,8 +222,7 @@ function respondWithMessage(
 function modelsList() {
   const grokModel = modelDetails(upstreamModel());
   const opencodeModelDetails = opencodeModels().map((model) => modelDetails(`opencode/${model.id}`));
-  const clineModelDetails = clineModels().map((model) => modelDetails(`cline/${model.id}`));
-  const data = [grokModel, ...opencodeModelDetails, ...clineModelDetails];
+  const data = [grokModel, ...opencodeModelDetails];
   return {
     data,
     has_more: false,
@@ -256,27 +232,6 @@ function modelsList() {
 }
 
 function modelDetails(id: string) {
-  const cline = resolveClineModel(id);
-  if (cline) {
-    return {
-      id: id.startsWith("cline/") || id.startsWith("cline-pass/") || id.startsWith("clinepass/")
-        ? id
-        : `cline/${cline.id}`,
-      type: "model",
-      display_name: cline.displayName,
-      created_at: "2026-07-22T00:00:00Z",
-      context_window: cline.contextWindow,
-      contextWindow: cline.contextWindow,
-      max_input_tokens: cline.contextWindow,
-      maxInputTokens: cline.contextWindow,
-      input_token_limit: cline.contextWindow,
-      compact_at_chars: cline.compactAtChars,
-      claude_auto_compact_window: cline.compactAtChars,
-      max_output_tokens: cline.maxOutputTokens,
-      maxOutputTokens: cline.maxOutputTokens,
-    };
-  }
-
   const opencode = resolveOpenCodeModel(id);
   if (opencode) {
     return {
@@ -284,6 +239,13 @@ function modelDetails(id: string) {
       type: "model",
       display_name: opencode.displayName,
       created_at: "2026-06-02T00:00:00Z",
+      context_window: opencode.contextWindow,
+      contextWindow: opencode.contextWindow,
+      max_input_tokens: opencode.contextWindow,
+      maxInputTokens: opencode.contextWindow,
+      input_token_limit: opencode.contextWindow,
+      max_output_tokens: opencode.maxOutputTokens,
+      maxOutputTokens: opencode.maxOutputTokens,
     };
   }
 
@@ -295,26 +257,12 @@ function modelDetails(id: string) {
   };
 }
 
-function routeProvider(model: string | undefined): "opencode" | "cline" | "grok" {
-  if (model && isClineModel(model)) return "cline";
+function routeProvider(model: string | undefined): "opencode" | "grok" {
   if (model && isOpenCodeModel(model)) return "opencode";
 
   const provider = process.env.PROXY_PROVIDER?.toLowerCase();
-  if (provider === "cline" || provider === "clinepass" || provider === "cline-pass") return "cline";
   if (provider === "opencode") return "opencode";
   return "grok";
-}
-
-function requestCharLimitForRoute(
-  route: ReturnType<typeof routeProvider>,
-  model: string | undefined,
-): number | undefined {
-  if (route === "cline") return clineRequestCharLimit(model);
-  return undefined;
-}
-
-function clineRequestCharLimits(): Record<string, number> {
-  return Object.fromEntries(clineModels().map((model) => [`cline/${model.id}`, model.compactAtChars]));
 }
 
 export { server };

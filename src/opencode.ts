@@ -7,6 +7,7 @@ import {
 import { createModelRegistry, type ModelRegistry } from "./model-registry";
 import {
   anthropicToOpenAI,
+  DEFAULT_MAX_OUTPUT_TOKENS,
   openAIChatStreamToAnthropicSSE,
   openAIToAnthropic,
   type OpenAIChatModelConfig,
@@ -21,7 +22,33 @@ export type OpenCodeProtocol = "openai" | "anthropic";
 export interface OpenCodeModelConfig extends OpenAIChatModelConfig {
   protocol: OpenCodeProtocol;
   displayName: string;
+  contextWindow: number;
+  maxOutputTokens: number;
 }
+
+const MODEL_LIMITS: Record<string, { context: number; output: number }> = {
+  "glm-5.1": { context: 204_800, output: 131_072 },
+  "glm-5": { context: 204_800, output: 131_072 },
+  "kimi-k2.5": { context: 262_144, output: 65_536 },
+  "kimi-k2.6": { context: 262_144, output: 65_536 },
+  "deepseek-v4-pro": { context: 1_000_000, output: 384_000 },
+  "deepseek-v4-flash": { context: 1_000_000, output: 384_000 },
+  "deepseek-v4-flash-free": { context: 200_000, output: 128_000 },
+  "big-pickle": { context: 200_000, output: 32_000 },
+  "minimax-m2.7": { context: 204_800, output: 131_072 },
+  "minimax-m2.5": { context: 204_800, output: 131_072 },
+  "mimo-v2.5-free": { context: 200_000, output: 32_000 },
+  "nemotron-3-ultra-free": { context: 1_000_000, output: 128_000 },
+  "nemotron-3.5-lightning-free": { context: 262_144, output: 262_144 },
+  "hy3-free": { context: 190_000, output: 64_000 },
+  "laguna-s-2.1-free": { context: 256_000, output: 32_000 },
+  "x-preview-f-free": { context: 1_000_000, output: 131_072 },
+  "muse-spark-1.2-contributor-free": { context: 1_048_576, output: 131_072 },
+  "minimax-m3": { context: 512_000, output: 128_000 },
+  "qwen3.7-max": { context: 262_144, output: 65_536 },
+  "qwen3.6-plus": { context: 262_144, output: 65_536 },
+  "qwen3.5-plus": { context: 262_144, output: 65_536 },
+};
 
 const OPENAI_MODELS = [
   "glm-5.1",
@@ -36,14 +63,17 @@ const OPENAI_MODELS = [
   "minimax-m2.5",
   "mimo-v2.5-free",
   "nemotron-3-ultra-free",
-  "north-mini-code-free",
+  "nemotron-3.5-lightning-free",
+  "hy3-free",
+  "laguna-s-2.1-free",
+  "x-preview-f-free",
+  "muse-spark-1.2-contributor-free",
 ];
 
 const ANTHROPIC_MODELS = [
   "minimax-m3",
   "qwen3.7-max",
   "qwen3.6-plus",
-  "qwen3.6-plus-free",
   "qwen3.5-plus",
 ];
 
@@ -57,16 +87,23 @@ const registry: ModelRegistry<OpenCodeModelConfig> = createModelRegistry(
       protocol: "openai" as const,
       displayName: `OpenCode Zen ${id}`,
       noMultimodal: NO_MULTIMODAL.has(id),
+      contextWindow: MODEL_LIMITS[id]?.context ?? 200_000,
+      maxOutputTokens: MODEL_LIMITS[id]?.output ?? DEFAULT_MAX_OUTPUT_TOKENS,
     })),
     ...ANTHROPIC_MODELS.map((id) => ({
       id,
       upstreamId: id,
       protocol: "anthropic" as const,
       displayName: `OpenCode Zen ${id}`,
+      contextWindow: MODEL_LIMITS[id]?.context ?? 200_000,
+      maxOutputTokens: MODEL_LIMITS[id]?.output ?? DEFAULT_MAX_OUTPUT_TOKENS,
     })),
   ],
   (model) => {
-    const id = model.trim().replace(/^opencode[/:]/, "");
+    const id = model
+      .trim()
+      .replace(/\[1m\]$/i, "")
+      .replace(/^opencode[/:]/, "");
     return id || undefined;
   },
 );

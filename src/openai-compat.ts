@@ -31,6 +31,8 @@ export interface OpenAIChatModelConfig {
   id: string;
   upstreamId: string;
   noMultimodal?: boolean;
+  /** Upstream output limit; used to default and clamp max_tokens. */
+  maxOutputTokens?: number;
 }
 
 export function anthropicToOpenAI(
@@ -123,10 +125,12 @@ export function anthropicToOpenAI(
     }
   }
 
+  const maxOutput = modelConfig.maxOutputTokens ?? DEFAULT_MAX_OUTPUT_TOKENS;
+  const requestedMaxTokens = input.max_tokens ?? options.defaultMaxTokens ?? maxOutput;
   const body: OpenAIChatRequest = {
     model: modelConfig.upstreamId,
     messages,
-    max_tokens: input.max_tokens ?? options.defaultMaxTokens ?? DEFAULT_MAX_OUTPUT_TOKENS,
+    max_tokens: Math.min(requestedMaxTokens, maxOutput),
     stream: options.stream ?? false,
   };
 
@@ -139,7 +143,6 @@ export function anthropicToOpenAI(
     if (isDeepSeekV4(modelConfig)) body.reasoning_effort = effort;
     else body.effort = effort;
   }
-  if (input.thinking?.budget_tokens) body.max_completion_tokens = input.thinking.budget_tokens;
 
   if (input.tools?.length) {
     body.tools = input.tools.map(openAITool);

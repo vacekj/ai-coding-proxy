@@ -11,7 +11,6 @@ const originalEnv: Record<string, string | undefined> = {};
 const envKeys = [
   "PORT",
   "GROK_CLI_AUTH_FILE",
-  "CLINE_API_KEY",
   "PROXY_MAX_TOOL_RESULT_CHARS",
   "PROXY_MAX_REQUEST_CHARS",
 ] as const;
@@ -26,7 +25,6 @@ let upstreamHandler: ((url: string, init?: RequestInit) => Response | Promise<Re
 
 beforeAll(async () => {
   process.env.PORT = String(19_000 + (process.pid % 500));
-  process.env.CLINE_API_KEY = "test-cline-key";
   process.env.PROXY_MAX_TOOL_RESULT_CHARS = "100";
   process.env.PROXY_MAX_REQUEST_CHARS = "2000";
 
@@ -78,7 +76,7 @@ describe("server health and model listing", () => {
     expect(body.default_provider).toBe("grok");
   });
 
-  it("lists grok, opencode, and cline models with dual key formats", async () => {
+  it("lists grok and opencode models with context limits", async () => {
     const response = await fetch(`${baseUrl}/v1/models`);
     expect(response.status).toBe(200);
     const body = (await response.json()) as {
@@ -87,11 +85,9 @@ describe("server health and model listing", () => {
     const ids = body.data.map((model) => model.id);
     expect(ids).toContain("grok-composer-2.5-fast");
     expect(ids).toContain("opencode/mimo-v2.5-free");
-    expect(ids).toContain("cline/kimi-k3");
-    const clineDetail = body.data.find((model) => model.id === "cline/kimi-k3")!;
-    expect(clineDetail.context_window).toBe(1_000_000);
-    expect(clineDetail.contextWindow).toBe(1_000_000);
-    expect(clineDetail.max_input_tokens).toBe(1_000_000);
+    const detail = body.data.find((model) => model.id === "opencode/x-preview-f-free")!;
+    expect(detail.context_window).toBe(1_000_000);
+    expect(detail.max_output_tokens).toBe(131_072);
   });
 
   it("returns 404 for unknown routes", async () => {
@@ -288,131 +284,6 @@ describe("grok route", () => {
     } finally {
       delete process.env.PROXY_STREAM_PING_MS;
     }
-  });
-});
-
-describe("cline route", () => {
-  it("streams text and tool calls from chat completion chunks", async () => {
-    let captured: { url: string; headers: Headers; body: Record<string, unknown> } | undefined;
-
-    upstreamHandler = (url, init) => {
-      captured = {
-        url,
-        headers: new Headers(init?.headers),
-        body: JSON.parse(String(init?.body)) as Record<string, unknown>,
-      };
-      const chunks = [
-        { delta: { role: "assistant", content: "Hel" } },
-        { delta: { content: "lo" } },
-        { delta: { tool_calls: [{ index: 0, id: "call_1", function: { name: "Bash", arguments: '{"command":' } }] } },
-        { delta: { tool_calls: [{ index: 0, function: { arguments: '"pwd"}' } }] }, finish_reason: "tool_calls" },
-      ];
-      return sseResponse(
-        chunks
-          .map(
-            (chunk) =>
-              `data: ${JSON.stringify({
-                id: "chatcmpl_1",
-                object: "chat.completion.chunk",
-                choices: [{ index: 0, ...chunk }],
-              })}\n\n`,
-          )
-          .join("") + "data: [DONE]\n\n",
-      );
-    };
-
-    const response = await fetch(`${baseUrl}/v1/messages`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        model: "cline/kimi-k3",
-        max_tokens: 64,
-        stream: true,
-        messages: [{ role: "user", content: "run pwd" }],
-      }),
-    });
-
-    expect(response.status).toBe(200);
-    expect(captured?.url).toBe("https://api.cline.bot/api/v1/chat/completions");
-    expect(captured?.headers.get("authorization")).toBe("Bearer test-cline-key");
-    expect(captured?.body.stream).toBe(true);
-    expect(captured?.body.model).toBe("cline-pass/kimi-k3");
-    expect(captured?.body.effort).toBeUndefined();
-
-    const events = await collectEvents(response);
-    const names = events.map((event) => event.event);
-
-    const textDeltas = events
-      .filter((event) => event.event === "content_block_delta")
-      .map((event) => (event.parsed as { delta: { type: string; text?: string } }).delta)
-      .filter((delta) => delta.type === "text_delta");
-    expect(textDeltas.map((delta) => delta.text).join("")).toBe("Hello");
-
-    const toolStart = events
-      .filter((event) => event.event === "content_block_start")
-      .map((event) => event.parsed as { content_block: { type: string; id: string; name: string } })
-      .find((event) => event.content_block.type === "tool_use")!;
-    expect(toolStart.content_block).toMatchObject({ type: "tool_use", id: "call_1", name: "Bash" });
-
-    const finalDelta = events.find((event) => event.event === "message_delta")!.parsed as {
-      delta: { stop_reason: string };
-    };
-    expect(finalDelta.delta.stop_reason).toBe("tool_use");
-    expect(names.at(-1)).toBe("message_stop");
-  });
-
-  it("returns a buffered message for non-stream requests", async () => {
-    upstreamHandler = () =>
-      Response.json({
-        id: "gen_1",
-        choices: [{ message: { content: "ok from cline" }, finish_reason: "stop" }],
-        usage: { prompt_tokens: 3, completion_tokens: 2 },
-      });
-
-    const response = await fetch(`${baseUrl}/v1/messages`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        model: "cline/kimi-k2.6",
-        max_tokens: 32,
-        messages: [{ role: "user", content: "hi" }],
-      }),
-    });
-
-    expect(response.status).toBe(200);
-    const message = (await response.json()) as { content: Array<{ type: string; text: string }> };
-    expect(message.content).toEqual([{ type: "text", text: "ok from cline" }]);
-  });
-
-  it("truncates oversized tool results before forwarding upstream", async () => {
-    let upstreamBody: string | undefined;
-
-    upstreamHandler = (_url, init) => {
-      upstreamBody = String(init?.body);
-      return Response.json({
-        id: "gen_1",
-        choices: [{ message: { content: "done" }, finish_reason: "stop" }],
-        usage: { prompt_tokens: 3, completion_tokens: 1 },
-      });
-    };
-
-    const response = await fetch(`${baseUrl}/v1/messages`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        model: "cline/kimi-k2.6",
-        max_tokens: 32,
-        messages: [
-          {
-            role: "user",
-            content: [{ type: "tool_result", tool_use_id: "t1", content: "b".repeat(5000) }],
-          },
-        ],
-      }),
-    });
-
-    expect(response.status).toBe(200);
-    expect(upstreamBody).toContain("large tool result truncated by proxy");
   });
 });
 
