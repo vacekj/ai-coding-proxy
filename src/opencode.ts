@@ -1,13 +1,16 @@
+import { readFile } from "node:fs/promises";
 import {
   opencodeAnthropicBaseUrl,
   opencodeApiKey,
+  opencodeAuthFilePath,
   opencodeDefaultModel,
+  opencodeGoAnthropicBaseUrl,
+  opencodeGoOpenAIBaseUrl,
   opencodeOpenAIBaseUrl,
 } from "./config";
 import { createModelRegistry, type ModelRegistry } from "./model-registry";
 import {
   anthropicToOpenAI,
-  DEFAULT_MAX_OUTPUT_TOKENS,
   openAIChatStreamToAnthropicSSE,
   openAIToAnthropic,
   type OpenAIChatModelConfig,
@@ -18,94 +21,124 @@ import { estimateAnthropicInputTokens, type AnthropicMessage } from "./translate
 import type { AnthropicContentBlock, AnthropicMessageRequest, OpenAIChatCompletion } from "./types";
 
 export type OpenCodeProtocol = "openai" | "anthropic";
+/** Zen is the pay-as-you-go/free catalog; Go is the subscription catalog. */
+export type OpenCodePlan = "zen" | "go";
 
 export interface OpenCodeModelConfig extends OpenAIChatModelConfig {
+  plan: OpenCodePlan;
   protocol: OpenCodeProtocol;
   displayName: string;
   contextWindow: number;
   maxOutputTokens: number;
 }
 
-const MODEL_LIMITS: Record<string, { context: number; output: number }> = {
-  "glm-5.1": { context: 204_800, output: 131_072 },
-  "glm-5": { context: 204_800, output: 131_072 },
-  "kimi-k2.5": { context: 262_144, output: 65_536 },
-  "kimi-k2.6": { context: 262_144, output: 65_536 },
-  "deepseek-v4-pro": { context: 1_000_000, output: 384_000 },
-  "deepseek-v4-flash": { context: 1_000_000, output: 384_000 },
-  "deepseek-v4-flash-free": { context: 200_000, output: 128_000 },
-  "big-pickle": { context: 200_000, output: 32_000 },
-  "minimax-m2.7": { context: 204_800, output: 131_072 },
-  "minimax-m2.5": { context: 204_800, output: 131_072 },
-  "mimo-v2.5-free": { context: 200_000, output: 32_000 },
-  "nemotron-3-ultra-free": { context: 1_000_000, output: 128_000 },
-  "nemotron-3.5-lightning-free": { context: 262_144, output: 262_144 },
-  "hy3-free": { context: 190_000, output: 64_000 },
-  "laguna-s-2.1-free": { context: 256_000, output: 32_000 },
-  "x-preview-f-free": { context: 1_000_000, output: 131_072 },
-  "muse-spark-1.2-contributor-free": { context: 1_048_576, output: 131_072 },
-  "minimax-m3": { context: 512_000, output: 128_000 },
-  "qwen3.7-max": { context: 262_144, output: 65_536 },
-  "qwen3.6-plus": { context: 262_144, output: 65_536 },
-  "qwen3.5-plus": { context: 262_144, output: 65_536 },
+interface ModelSpec {
+  id: string;
+  context: number;
+  output: number;
+  /** Defaults to "openai"; "anthropic" uses the upstream's native /messages passthrough. */
+  protocol?: OpenCodeProtocol;
+  /** Defaults to false. Claude Code sends screenshots, so this has to be accurate. */
+  multimodal?: boolean;
+}
+
+/**
+ * Zen's $0 tier. These answer without any Authorization header, which is why the
+ * proxy can serve them with no credentials at all. Every paid Zen model was dropped:
+ * they need a Zen credit balance that an OpenCode Go subscription does not provide.
+ */
+const ZEN_MODELS: ModelSpec[] = [
+  { id: "big-pickle", context: 200_000, output: 32_000 },
+  { id: "hy3-free", context: 190_000, output: 64_000 },
+  { id: "laguna-s-2.1-free", context: 256_000, output: 32_000 },
+  { id: "mimo-v2.5-free", context: 200_000, output: 32_000, multimodal: true },
+  { id: "muse-spark-1.2-contributor-free", context: 1_048_576, output: 131_072, multimodal: true },
+  { id: "nemotron-3-ultra-free", context: 1_000_000, output: 128_000 },
+  { id: "nemotron-3.5-lightning-free", context: 262_144, output: 262_144 },
+  { id: "x-preview-f-free", context: 1_000_000, output: 131_072, multimodal: true },
+];
+
+/**
+ * OpenCode Go, authenticated with the `opencode-go` key from the OpenCode CLI's auth store.
+ * `deepseek-v4-pro` and `deepseek-v4-flash` are omitted: they return RegionError until
+ * China hosting is opted into per-workspace. `deepseek-v4-flash-vision-exp` needs no opt-in.
+ */
+const GO_MODELS: ModelSpec[] = [
+  { id: "deepseek-v4-flash-vision-exp", context: 1_000_000, output: 384_000, multimodal: true },
+  { id: "glm-5", context: 202_752, output: 32_768 },
+  { id: "glm-5.1", context: 202_752, output: 32_768 },
+  { id: "glm-5.2", context: 1_000_000, output: 131_072 },
+  { id: "glm-5.3", context: 1_000_000, output: 131_072 },
+  { id: "gpt-5.6-luna", context: 1_050_000, output: 128_000, multimodal: true },
+  { id: "hy3", context: 256_000, output: 64_000 },
+  { id: "kimi-k2.5", context: 262_144, output: 65_536, multimodal: true },
+  { id: "kimi-k2.6", context: 262_144, output: 65_536, multimodal: true },
+  { id: "kimi-k2.7-code", context: 262_144, output: 262_144, multimodal: true },
+  { id: "kimi-k3", context: 1_048_576, output: 131_072, protocol: "anthropic", multimodal: true },
+  { id: "mimo-v2.5", context: 1_000_000, output: 128_000, multimodal: true },
+  { id: "mimo-v2.5-pro", context: 1_048_576, output: 128_000 },
+  { id: "minimax-m2.5", context: 204_800, output: 65_536, protocol: "anthropic" },
+  { id: "minimax-m2.7", context: 204_800, output: 131_072, protocol: "anthropic" },
+  { id: "minimax-m3", context: 1_000_000, output: 131_072, protocol: "anthropic", multimodal: true },
+  { id: "muse-spark-1.2-contributor", context: 1_048_576, output: 131_072, multimodal: true },
+  { id: "ox-alpha-free", context: 1_000_000, output: 131_072, multimodal: true },
+  { id: "qwen3.5-plus", context: 262_144, output: 65_536, protocol: "anthropic", multimodal: true },
+  { id: "qwen3.6-plus", context: 1_000_000, output: 65_536, protocol: "anthropic", multimodal: true },
+  { id: "qwen3.7-max", context: 1_000_000, output: 65_536, protocol: "anthropic" },
+  { id: "qwen3.7-plus", context: 1_000_000, output: 65_536, protocol: "anthropic", multimodal: true },
+  { id: "qwen3.8-max", context: 1_000_000, output: 131_072, protocol: "anthropic", multimodal: true },
+];
+
+const PLAN_LABELS: Record<OpenCodePlan, string> = {
+  zen: "OpenCode Zen",
+  go: "OpenCode Go",
 };
 
-const OPENAI_MODELS = [
-  "glm-5.1",
-  "glm-5",
-  "kimi-k2.5",
-  "kimi-k2.6",
-  "deepseek-v4-pro",
-  "deepseek-v4-flash",
-  "deepseek-v4-flash-free",
-  "big-pickle",
-  "minimax-m2.7",
-  "minimax-m2.5",
-  "mimo-v2.5-free",
-  "nemotron-3-ultra-free",
-  "nemotron-3.5-lightning-free",
-  "hy3-free",
-  "laguna-s-2.1-free",
-  "x-preview-f-free",
-  "muse-spark-1.2-contributor-free",
+function toModelConfig(spec: ModelSpec, plan: OpenCodePlan): OpenCodeModelConfig {
+  return {
+    id: `${plan}/${spec.id}`,
+    upstreamId: spec.id,
+    plan,
+    protocol: spec.protocol ?? "openai",
+    displayName: `${PLAN_LABELS[plan]} ${spec.id}`,
+    noMultimodal: spec.multimodal !== true,
+    contextWindow: spec.context,
+    maxOutputTokens: spec.output,
+  };
+}
+
+const MODEL_CONFIGS: OpenCodeModelConfig[] = [
+  ...ZEN_MODELS.map((spec) => toModelConfig(spec, "zen")),
+  ...GO_MODELS.map((spec) => toModelConfig(spec, "go")),
 ];
 
-const ANTHROPIC_MODELS = [
-  "minimax-m3",
-  "qwen3.7-max",
-  "qwen3.6-plus",
-  "qwen3.5-plus",
-];
+const KNOWN_IDS = new Set(MODEL_CONFIGS.map((config) => config.id));
 
-const NO_MULTIMODAL = new Set(["glm-5.1", "glm-5"]);
+/**
+ * Accepts `zen/<id>`, `go/<id>`, the legacy `opencode/<id>` alias, and bare `<id>`.
+ * Zen and Go share ids, so a bare id prefers Zen and falls back to Go.
+ */
+function normalizeModelId(model: string): string | undefined {
+  const raw = model
+    .trim()
+    .replace(/\[1m\]$/i, "")
+    .trim();
+  if (!raw) return undefined;
+
+  const prefixed = /^(zen|go|opencode)[/:](.+)$/i.exec(raw);
+  if (prefixed) {
+    const plan = prefixed[1]!.toLowerCase() === "go" ? "go" : "zen";
+    return `${plan}/${prefixed[2]!.trim()}`;
+  }
+
+  if (KNOWN_IDS.has(`zen/${raw}`)) return `zen/${raw}`;
+  if (KNOWN_IDS.has(`go/${raw}`)) return `go/${raw}`;
+  return undefined;
+}
 
 const registry: ModelRegistry<OpenCodeModelConfig> = createModelRegistry(
-  [
-    ...OPENAI_MODELS.map((id) => ({
-      id,
-      upstreamId: id,
-      protocol: "openai" as const,
-      displayName: `OpenCode Zen ${id}`,
-      noMultimodal: NO_MULTIMODAL.has(id),
-      contextWindow: MODEL_LIMITS[id]?.context ?? 200_000,
-      maxOutputTokens: MODEL_LIMITS[id]?.output ?? DEFAULT_MAX_OUTPUT_TOKENS,
-    })),
-    ...ANTHROPIC_MODELS.map((id) => ({
-      id,
-      upstreamId: id,
-      protocol: "anthropic" as const,
-      displayName: `OpenCode Zen ${id}`,
-      contextWindow: MODEL_LIMITS[id]?.context ?? 200_000,
-      maxOutputTokens: MODEL_LIMITS[id]?.output ?? DEFAULT_MAX_OUTPUT_TOKENS,
-    })),
-  ],
-  (model) => {
-    const id = model
-      .trim()
-      .replace(/\[1m\]$/i, "")
-      .replace(/^opencode[/:]/, "");
-    return id || undefined;
-  },
+  MODEL_CONFIGS,
+  normalizeModelId,
 );
 
 export function opencodeModels(): OpenCodeModelConfig[] {
@@ -121,7 +154,7 @@ export function resolveOpenCodeModel(model: string | undefined): OpenCodeModelCo
 }
 
 export function defaultOpenCodeModel(): OpenCodeModelConfig {
-  return registry.defaultModel(opencodeDefaultModel(), "mimo-v2.5-free");
+  return registry.defaultModel(opencodeDefaultModel(), "zen/mimo-v2.5-free");
 }
 
 export async function fetchOpenCodeMessage(
@@ -148,16 +181,15 @@ export function streamOpenCodeMessage(
   const clientModel = input.model ?? modelConfig.id;
   const controller = new AbortController();
   const signal = anySignal(options.signal, controller.signal);
+  const upstream = fetchOpenCodeResponse(input, modelConfig, { signal, stream: true });
 
   if (modelConfig.protocol === "anthropic") {
-    const upstream = fetchOpenCodeResponse(input, modelConfig, { signal, stream: true });
     return anthropicSSEToAnthropicSSE(upstream, clientModel, {
       signal: controller.signal,
       abort: () => controller.abort(),
     });
   }
 
-  const upstream = fetchOpenCodeResponse(input, modelConfig, { signal, stream: true });
   return openAIChatStreamToAnthropicSSE(upstream, clientModel, estimateAnthropicInputTokens(input), {
     signal: controller.signal,
     abort: () => controller.abort(),
@@ -169,34 +201,75 @@ async function fetchOpenCodeResponse(
   modelConfig: OpenCodeModelConfig,
   options: { signal?: AbortSignal; stream: boolean },
 ): Promise<Response> {
+  const headers = await opencodeHeaders(modelConfig);
+  const label = PLAN_LABELS[modelConfig.plan];
+
   if (modelConfig.protocol === "anthropic") {
     return postJSON(
-      opencodeAnthropicBaseUrl(),
-      opencodeHeaders("anthropic"),
+      anthropicUrl(modelConfig),
+      headers,
       { ...input, model: modelConfig.upstreamId, stream: options.stream },
       options.signal,
-      "OpenCode Zen",
+      label,
     );
   }
 
   return postJSON(
-    opencodeOpenAIBaseUrl(),
-    opencodeHeaders("openai"),
+    openAIUrl(modelConfig),
+    headers,
     anthropicToOpenAI(input, modelConfig, { stream: options.stream }),
     options.signal,
-    "OpenCode Zen",
+    label,
   );
 }
 
-function opencodeHeaders(protocol: OpenCodeProtocol): Record<string, string> {
-  const headers: Record<string, string> = {
-    "Content-Type": "application/json",
-  };
-  const key = opencodeApiKey();
-  if (key && protocol === "openai") headers.Authorization = `Bearer ${key}`;
-  if (key && protocol === "anthropic") headers["x-api-key"] = key;
-  if (protocol === "anthropic") headers["anthropic-version"] = "2023-06-01";
+function openAIUrl(modelConfig: OpenCodeModelConfig): string {
+  return modelConfig.plan === "go" ? opencodeGoOpenAIBaseUrl() : opencodeOpenAIBaseUrl();
+}
+
+function anthropicUrl(modelConfig: OpenCodeModelConfig): string {
+  return modelConfig.plan === "go" ? opencodeGoAnthropicBaseUrl() : opencodeAnthropicBaseUrl();
+}
+
+async function opencodeHeaders(modelConfig: OpenCodeModelConfig): Promise<Record<string, string>> {
+  const headers: Record<string, string> = { "Content-Type": "application/json" };
+  if (modelConfig.protocol === "anthropic") headers["anthropic-version"] = "2023-06-01";
+
+  const key = modelConfig.plan === "go" ? await opencodeGoApiKey() : opencodeApiKey();
+  if (key) {
+    if (modelConfig.protocol === "anthropic") headers["x-api-key"] = key;
+    else headers.Authorization = `Bearer ${key}`;
+  }
   return headers;
+}
+
+let cachedGoApiKey: string | undefined;
+
+/**
+ * Reads the Go subscription key the OpenCode CLI already stores, mirroring how the
+ * Grok provider reuses ~/.grok/auth.json. The proxy never takes a key from its clients.
+ */
+export async function opencodeGoApiKey(): Promise<string> {
+  if (cachedGoApiKey) return cachedGoApiKey;
+
+  const path = opencodeAuthFilePath();
+  const hint = `Run "opencode auth login" and choose OpenCode Go, then retry.`;
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(await readFile(path, "utf8"));
+  } catch {
+    throw new Error(`No OpenCode credentials file at ${path}. ${hint}`);
+  }
+
+  const entry = isRecord(parsed) ? parsed["opencode-go"] : undefined;
+  const key = isRecord(entry) && typeof entry.key === "string" ? entry.key.trim() : "";
+  if (!key) {
+    throw new Error(`No "opencode-go" API key in ${path}. ${hint}`);
+  }
+
+  cachedGoApiKey = key;
+  return key;
 }
 
 function normalizeAnthropicMessage(
@@ -205,7 +278,7 @@ function normalizeAnthropicMessage(
   input: AnthropicMessageRequest,
 ): AnthropicMessage {
   if (!isRecord(upstream)) {
-    throw new Error("OpenCode Zen Anthropic upstream returned a non-object response");
+    throw new Error("OpenCode Anthropic upstream returned a non-object response");
   }
 
   const content: AnthropicContentBlock[] = Array.isArray(upstream.content)

@@ -8,14 +8,16 @@ A tiny Bun/TypeScript Anthropic Messages API proxy for Claude Code. Run one loca
 It supports:
 
 - **Grok Composer** through Grok CLI OAuth, using `grok-composer-2.5-fast`
-- **OpenCode Zen** through Zen model IDs such as `opencode/mimo-v2.5-free`
+- **OpenCode Zen** free tier through `zen/` model IDs such as `zen/mimo-v2.5-free`
+- **OpenCode Go** subscription through `go/` model IDs such as `go/glm-5.3`
 
-The proxy does not accept API keys from local clients and does not implement its own OAuth flow. For Grok, it only reads the token created by `grok login --oauth`.
+The proxy does not accept API keys from local clients and does not implement its own OAuth flow. For Grok, it only reads the token created by `grok login --oauth`; for OpenCode Go, it only reads the key created by `opencode auth login`.
 
 ## When to use this
 
-- You want to use [Claude Code](https://docs.anthropic.com/en/docs/claude-code/overview) but route to a non-Anthropic model (Grok, OpenCode Zen) for cost or experimentation.
+- You want to use [Claude Code](https://docs.anthropic.com/en/docs/claude-code/overview) but route to a non-Anthropic model (Grok, OpenCode) for cost or experimentation.
 - You want OpenCode Zen's free model tier working inside Claude Code without a Zen API key.
+- You have an OpenCode Go subscription and want its models in the Claude Code model picker.
 - You want a single local endpoint that can talk to multiple backends, switching by model name.
 
 ## When *not* to use this
@@ -60,33 +62,61 @@ claude
 
 That is the normal happy path.
 
-## OpenCode Zen
+## OpenCode
 
-OpenCode Zen models are available from the same local server. Use an `opencode/` model ID in Claude Code:
+OpenCode models are served from the same local server, under two prefixes:
+
+| Prefix | Catalog | Credentials |
+| --- | --- | --- |
+| `zen/` | OpenCode Zen free tier (8 models) | none |
+| `go/` | OpenCode Go subscription (23 models) | `opencode-go` key from the OpenCode CLI |
+
+Only models verified to answer a live request are registered. Paid Zen models are
+deliberately absent: they bill against a Zen credit balance, which an OpenCode Go
+subscription does not provide.
+
+### Zen free tier
+
+No credentials at all:
 
 ```bash
 export ANTHROPIC_BASE_URL=http://127.0.0.1:8317
-export ANTHROPIC_MODEL=opencode/mimo-v2.5-free
-export ANTHROPIC_DEFAULT_SONNET_MODEL=opencode/mimo-v2.5-free
-export ANTHROPIC_DEFAULT_OPUS_MODEL=opencode/mimo-v2.5-free
+export ANTHROPIC_MODEL=zen/mimo-v2.5-free
+export ANTHROPIC_DEFAULT_SONNET_MODEL=zen/mimo-v2.5-free
+export ANTHROPIC_DEFAULT_OPUS_MODEL=zen/mimo-v2.5-free
 export ANTHROPIC_API_KEY=not-needed
 export ANTHROPIC_AUTH_TOKEN=not-needed
 claude
 ```
 
-The tested free Zen model path works without a key. For paid or key-gated Zen models, use `/connect` in OpenCode, select OpenCode Zen, and set:
+### Go subscription
+
+Log in once with the OpenCode CLI, which writes the key to
+`~/.local/share/opencode/auth.json`; the proxy reads it from there.
 
 ```bash
-export OPENCODE_API_KEY=...
+opencode auth login   # choose OpenCode Go
+export ANTHROPIC_BASE_URL=http://127.0.0.1:8317
+export ANTHROPIC_MODEL=go/glm-5.3
+export ANTHROPIC_API_KEY=not-needed
+export ANTHROPIC_AUTH_TOKEN=not-needed
+claude
 ```
 
-Known Zen model IDs are exposed through:
+`go/deepseek-v4-pro` and `go/deepseek-v4-flash` are not registered: OpenCode serves the
+current versions from China only, and returns `RegionError` until that is opted into per
+workspace at `https://opencode.ai/workspace/<workspace-id>/go`. `go/deepseek-v4-flash-vision-exp`
+needs no opt-in and is registered. Opt in and the other two can be added to `GO_MODELS`
+in `src/opencode.ts`.
+
+Registered model IDs are exposed through:
 
 ```bash
 curl http://127.0.0.1:8317/v1/models
 ```
 
-The proxy accepts both `opencode/<model-id>` and raw Zen model IDs.
+The proxy accepts `zen/<id>`, `go/<id>`, the legacy `opencode/<id>` alias, and bare model
+IDs. A bare ID resolves to Zen first, then Go.
 
 ## Configuration
 
@@ -105,10 +135,13 @@ The app reads environment variables directly; use your shell, direnv, or another
 | `GROK_PROXY_MODEL` | `grok-composer-2.5-fast` | Upstream Grok CLI model |
 | `GROK_PROXY_BASE_URL` | `https://cli-chat-proxy.grok.com/v1` | Grok CLI API base URL |
 | `GROK_CLI_AUTH_FILE` | `~/.grok/auth.json` | Grok CLI OAuth credential file |
-| `OPENCODE_API_KEY` | unset | Optional OpenCode Zen API key for paid/keyed Zen models |
-| `OPENCODE_PROXY_MODEL` | `mimo-v2.5-free` | Default Zen model when `PROXY_PROVIDER=opencode` |
+| `OPENCODE_API_KEY` | unset | Optional OpenCode Zen API key; the free tier does not need one |
+| `OPENCODE_AUTH_FILE` | `~/.local/share/opencode/auth.json` | OpenCode CLI credential file holding the `opencode-go` key |
+| `OPENCODE_PROXY_MODEL` | `zen/mimo-v2.5-free` | Default OpenCode model when `PROXY_PROVIDER=opencode` |
 | `OPENCODE_OPENAI_BASE_URL` | `https://opencode.ai/zen/v1/chat/completions` | Zen OpenAI-compatible endpoint |
 | `OPENCODE_ANTHROPIC_BASE_URL` | `https://opencode.ai/zen/v1/messages` | Zen Anthropic Messages endpoint |
+| `OPENCODE_GO_OPENAI_BASE_URL` | `https://opencode.ai/zen/go/v1/chat/completions` | Go OpenAI-compatible endpoint |
+| `OPENCODE_GO_ANTHROPIC_BASE_URL` | `https://opencode.ai/zen/go/v1/messages` | Go Anthropic Messages endpoint |
 | `PROXY_PROVIDER` | unset | Set to `opencode` to route unrecognized model names there |
 | `PROXY_MAX_TOOL_RESULT_CHARS` | `24000` | Max characters kept from a single `tool_result` before head/tail truncation |
 | `PROXY_MAX_REQUEST_CHARS` | `200000` | Approximate serialized Anthropic request budget before older tool results are compacted harder |
@@ -116,7 +149,7 @@ The app reads environment variables directly; use your shell, direnv, or another
 | `PROXY_IDLE_TIMEOUT_SECONDS` | `255` | Bun server idle timeout for long upstream requests |
 | `PROXY_STREAM_PING_MS` | `4000` | Anthropic SSE `ping` interval while waiting for non-streaming upstream responses |
 
-For smaller-context Zen models such as `opencode/deepseek-v4-flash-free`, keep the request budget conservative. If huge tool results cause upstream `ECONNRESET` failures, try:
+For smaller-context models such as `zen/mimo-v2.5-free`, keep the request budget conservative. If huge tool results cause upstream `ECONNRESET` failures, try:
 
 ```bash
 export PROXY_MAX_REQUEST_CHARS=120000
@@ -131,7 +164,7 @@ If a client or network path closes long streaming requests, increase `PROXY_IDLE
 ## Local Endpoints
 
 - `GET /health` returns current proxy settings.
-- `GET /v1/models` lists Grok and known OpenCode Zen model IDs.
+- `GET /v1/models` lists Grok and registered OpenCode `zen/` and `go/` model IDs.
 - `POST /v1/messages` handles Anthropic-compatible message requests.
 - `POST /anthropic/v1/messages` is an alias for clients that include the Anthropic prefix.
 - `POST /v1/messages/count_tokens` returns the proxy's rough token estimate and sanitization stats.
@@ -158,8 +191,9 @@ bun run test:live
 
 ## Notes
 
-- Grok credentials are separate from OpenCode Zen credentials.
+- Grok credentials are separate from OpenCode credentials.
 - If Grok credentials are missing or expired, run `bun run login`.
+- If Go requests fail on credentials, run `opencode auth login` and choose OpenCode Go.
 - Local proxy clients are unauthenticated, so keep the default `HOST=127.0.0.1` unless you intentionally want to expose it.
 
 ## License

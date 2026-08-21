@@ -11,6 +11,7 @@ const originalEnv: Record<string, string | undefined> = {};
 const envKeys = [
   "PORT",
   "GROK_CLI_AUTH_FILE",
+  "OPENCODE_AUTH_FILE",
   "PROXY_MAX_TOOL_RESULT_CHARS",
   "PROXY_MAX_REQUEST_CHARS",
 ] as const;
@@ -19,6 +20,7 @@ for (const key of envKeys) originalEnv[key] = process.env[key];
 let server: ProxyServer;
 let baseUrl: string;
 let authFilePath: string;
+let opencodeAuthFilePath: string;
 let serverStarted = false;
 
 let upstreamHandler: ((url: string, init?: RequestInit) => Response | Promise<Response>) | undefined;
@@ -40,6 +42,13 @@ beforeAll(async () => {
     }),
   );
 
+  opencodeAuthFilePath = `/tmp/ai-coding-proxy-integration-opencode-${crypto.randomUUID()}.json`;
+  process.env.OPENCODE_AUTH_FILE = opencodeAuthFilePath;
+  await Bun.write(
+    opencodeAuthFilePath,
+    JSON.stringify({ "opencode-go": { type: "api", key: "test-go-key" } }),
+  );
+
   const realFetch = globalThis.fetch;
   globalThis.fetch = (async (url: string | URL | Request, init?: RequestInit) => {
     const u = String(url);
@@ -59,6 +68,7 @@ beforeAll(async () => {
 afterAll(async () => {
   server?.stop();
   await rm(authFilePath, { force: true });
+  await rm(opencodeAuthFilePath, { force: true });
   for (const key of envKeys) {
     const value = originalEnv[key];
     if (value == null) delete process.env[key];
@@ -84,8 +94,8 @@ describe("server health and model listing", () => {
     };
     const ids = body.data.map((model) => model.id);
     expect(ids).toContain("grok-composer-2.5-fast");
-    expect(ids).toContain("opencode/mimo-v2.5-free");
-    const detail = body.data.find((model) => model.id === "opencode/x-preview-f-free")!;
+    expect(ids).toContain("zen/mimo-v2.5-free");
+    const detail = body.data.find((model) => model.id === "zen/x-preview-f-free")!;
     expect(detail.context_window).toBe(1_000_000);
     expect(detail.max_output_tokens).toBe(131_072);
   });
@@ -325,7 +335,7 @@ describe("opencode route", () => {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        model: "opencode/kimi-k2.6",
+        model: "go/kimi-k2.6",
         max_tokens: 64,
         stream: true,
         messages: [{ role: "user", content: "hi" }],
@@ -335,7 +345,7 @@ describe("opencode route", () => {
     expect(response.status).toBe(200);
     expect(captured?.body.model).toBe("kimi-k2.6");
     expect(captured?.body.stream).toBe(true);
-    expect(captured?.headers.get("authorization")).toBeNull();
+    expect(captured?.headers.get("authorization")).toBe("Bearer test-go-key");
 
     const events = await collectEvents(response);
     const deltas = events
@@ -352,7 +362,7 @@ describe("opencode route", () => {
     const start = events.find((event) => event.event === "message_start")!.parsed as {
       message: { model: string };
     };
-    expect(start.message.model).toBe("opencode/kimi-k2.6");
+    expect(start.message.model).toBe("go/kimi-k2.6");
 
     const finalDelta = events.find((event) => event.event === "message_delta")!.parsed as {
       usage: { output_tokens: number };
@@ -388,7 +398,7 @@ describe("opencode route", () => {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        model: "opencode/qwen3.7-max",
+        model: "go/qwen3.7-max",
         max_tokens: 64,
         stream: true,
         messages: [{ role: "user", content: "hi" }],
@@ -400,7 +410,7 @@ describe("opencode route", () => {
     const start = events.find((event) => event.event === "message_start")!.parsed as {
       message: { model: string; id: string };
     };
-    expect(start.message.model).toBe("opencode/qwen3.7-max");
+    expect(start.message.model).toBe("go/qwen3.7-max");
     expect(start.message.id).toBe("msg_up");
 
     const delta = events.find((event) => event.event === "content_block_delta")!.parsed as {
@@ -434,7 +444,7 @@ describe("opencode route", () => {
     };
 
     await postAndDisconnect(server.port!, {
-      model: "opencode/kimi-k2.6",
+      model: "go/kimi-k2.6",
       max_tokens: 64,
       stream: true,
       messages: [{ role: "user", content: "hi" }],

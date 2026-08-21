@@ -128,7 +128,7 @@ describe("live Grok Composer proxy", () => {
 });
 
 describe("live OpenCode Zen proxy", () => {
-  const zenModel = process.env.LIVE_OPENCODE_MODEL ?? "opencode/mimo-v2.5-free";
+  const zenModel = process.env.LIVE_OPENCODE_MODEL ?? "zen/mimo-v2.5-free";
 
   it("handles a real OpenCode Zen free-model text response", async () => {
     const expected = `zen-live-proxy-${crypto.randomUUID().slice(0, 8)}`;

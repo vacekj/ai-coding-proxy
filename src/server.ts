@@ -43,6 +43,8 @@ const server = Bun.serve({
           default_provider: "grok",
           grok_model: upstreamModel(),
           opencode_model: defaultOpenCodeModel().id,
+          opencode_zen_models: opencodeModels().filter((model) => model.plan === "zen").length,
+          opencode_go_models: opencodeModels().filter((model) => model.plan === "go").length,
           max_tool_result_chars: maxToolResultChars(),
           max_request_chars: maxRequestChars(),
           compacted_tool_result_chars: compactedToolResultChars(),
@@ -105,7 +107,12 @@ const server = Bun.serve({
 
 console.log(`AI Coding Proxy listening on http://${host}:${server.port}`);
 console.log(`Using Grok CLI credentials from ~/.grok/auth.json and model ${upstreamModel()}`);
-console.log(`OpenCode Zen models are available in the same server; default ${defaultOpenCodeModel().id}`);
+console.log(
+  `OpenCode models are available in the same server: ` +
+    `${opencodeModels().filter((model) => model.plan === "zen").length} zen/*, ` +
+    `${opencodeModels().filter((model) => model.plan === "go").length} go/*; ` +
+    `default ${defaultOpenCodeModel().id}`,
+);
 
 async function handleMessages(request: Request): Promise<Response> {
   const rawBody = (await request.json()) as AnthropicMessageRequest;
@@ -221,7 +228,7 @@ function respondWithMessage(
 
 function modelsList() {
   const grokModel = modelDetails(upstreamModel());
-  const opencodeModelDetails = opencodeModels().map((model) => modelDetails(`opencode/${model.id}`));
+  const opencodeModelDetails = opencodeModels().map((model) => modelDetails(model.id));
   const data = [grokModel, ...opencodeModelDetails];
   return {
     data,
@@ -235,7 +242,7 @@ function modelDetails(id: string) {
   const opencode = resolveOpenCodeModel(id);
   if (opencode) {
     return {
-      id: id || `opencode/${opencode.id}`,
+      id: id || opencode.id,
       type: "model",
       display_name: opencode.displayName,
       created_at: "2026-06-02T00:00:00Z",

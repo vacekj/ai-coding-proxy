@@ -5,6 +5,8 @@ export const XAI_CLIENT_ID = "b1a00492-073a-47ea-816f-4c329264a828";
 export const GROK_CLI_DEFAULT_API_BASE_URL = "https://cli-chat-proxy.grok.com/v1";
 export const OPENCODE_ZEN_OPENAI_BASE_URL = "https://opencode.ai/zen/v1/chat/completions";
 export const OPENCODE_ZEN_ANTHROPIC_BASE_URL = "https://opencode.ai/zen/v1/messages";
+export const OPENCODE_GO_OPENAI_BASE_URL = "https://opencode.ai/zen/go/v1/chat/completions";
+export const OPENCODE_GO_ANTHROPIC_BASE_URL = "https://opencode.ai/zen/go/v1/messages";
 export const GROK_CLI_CLIENT_VERSION = "0.2.16";
 
 export function expandHome(path: string): string {
@@ -22,7 +24,14 @@ export function upstreamModel(): string {
 }
 
 export function opencodeDefaultModel(): string {
-  return process.env.OPENCODE_PROXY_MODEL ?? "mimo-v2.5-free";
+  return process.env.OPENCODE_PROXY_MODEL ?? "zen/mimo-v2.5-free";
+}
+
+/** OpenCode CLI credential store; holds the `opencode-go` API key. */
+export function opencodeAuthFilePath(): string {
+  return expandHome(
+    process.env.OPENCODE_AUTH_FILE ?? join(homedir(), ".local", "share", "opencode", "auth.json"),
+  );
 }
 
 export function opencodeApiKey(): string | undefined {
@@ -35,6 +44,14 @@ export function opencodeOpenAIBaseUrl(): string {
 
 export function opencodeAnthropicBaseUrl(): string {
   return (process.env.OPENCODE_ANTHROPIC_BASE_URL ?? OPENCODE_ZEN_ANTHROPIC_BASE_URL).replace(/\/+$/, "");
+}
+
+export function opencodeGoOpenAIBaseUrl(): string {
+  return (process.env.OPENCODE_GO_OPENAI_BASE_URL ?? OPENCODE_GO_OPENAI_BASE_URL).replace(/\/+$/, "");
+}
+
+export function opencodeGoAnthropicBaseUrl(): string {
+  return (process.env.OPENCODE_GO_ANTHROPIC_BASE_URL ?? OPENCODE_GO_ANTHROPIC_BASE_URL).replace(/\/+$/, "");
 }
 
 export function grokApiBaseUrl(): string {
