@@ -33,6 +33,12 @@ export interface OpenAIChatModelConfig {
   noMultimodal?: boolean;
   /** Upstream output limit; used to default and clamp max_tokens. */
   maxOutputTokens?: number;
+  /** How this OpenAI-compatible upstream accepts reasoning effort. */
+  reasoningParameter?: "effort" | "reasoning_effort" | "reasoning";
+  /** Restrict effort values for models whose reasoning cannot be disabled. */
+  supportedReasoningEfforts?: readonly string[];
+  /** Preserve assistant thinking when continuing a tool-call conversation. */
+  preserveReasoning?: boolean;
 }
 
 export function anthropicToOpenAI(
@@ -73,7 +79,7 @@ export function anthropicToOpenAI(
           break;
         }
         case "thinking": {
-          if (role === "assistant" && isDeepSeekV4(modelConfig)) {
+          if (role === "assistant" && (isDeepSeekV4(modelConfig) || modelConfig.preserveReasoning)) {
             if (typeof block.thinking === "string") reasoningContent = block.thinking;
           }
           break;
@@ -140,7 +146,11 @@ export function anthropicToOpenAI(
 
   const effort = effortFromAnthropic(input, modelConfig);
   if (effort) {
-    if (isDeepSeekV4(modelConfig)) body.reasoning_effort = effort;
+    const parameter =
+      modelConfig.reasoningParameter ??
+      (isDeepSeekV4(modelConfig) ? "reasoning_effort" : "effort");
+    if (parameter === "reasoning") body.reasoning = { effort };
+    else if (parameter === "reasoning_effort") body.reasoning_effort = effort;
     else body.effort = effort;
   }
 
@@ -223,15 +233,30 @@ export function effortFromAnthropic(
   if (isDeepSeekV4(modelConfig)) return deepSeekV4EffortFromAnthropic(input);
 
   const explicit = input.output_config?.effort?.toLowerCase();
-  if (explicit) return clampEffort(explicit);
+  if (explicit) return modelEffort(explicit, modelConfig);
 
   const thinking = input.thinking;
-  if (!thinking || thinking.type === "disabled") return undefined;
-  if (thinking.type === "adaptive" || thinking.type === "auto") return "high";
+  if (!thinking) return undefined;
+  if (thinking.type === "disabled") {
+    return modelConfig.supportedReasoningEfforts?.length ? modelEffort("low", modelConfig) : undefined;
+  }
+  if (thinking.type === "adaptive" || thinking.type === "auto") return modelEffort("high", modelConfig);
   const budget = thinking.budget_tokens ?? 0;
-  if (budget >= HIGH_REASONING_BUDGET) return "high";
-  if (budget >= MEDIUM_REASONING_BUDGET) return "medium";
-  return "low";
+  if (budget >= HIGH_REASONING_BUDGET) return modelEffort("high", modelConfig);
+  if (budget >= MEDIUM_REASONING_BUDGET) return modelEffort("medium", modelConfig);
+  return modelEffort("low", modelConfig);
+}
+
+function modelEffort(value: string, modelConfig: OpenAIChatModelConfig): string {
+  const supported = modelConfig.supportedReasoningEfforts;
+  if (!supported?.length) return clampEffort(value);
+
+  const normalized =
+    value === "xhigh" ? "max" : value === "minimal" || value === "none" ? "low" : value;
+  if (supported.includes(normalized)) return normalized;
+  if ((normalized === "max" || normalized === "medium") && supported.includes("high")) return "high";
+  if (supported.includes("low")) return "low";
+  return supported[0];
 }
 
 export function deepSeekV4EffortFromAnthropic(input: AnthropicMessageRequest): string | undefined {
@@ -287,6 +312,7 @@ export interface OpenAIChunk {
     delta?: {
       role?: string;
       content?: string | null;
+      reasoning?: string | null;
       reasoning_content?: string | null;
       tool_calls?: Array<{
         index?: number;
@@ -450,14 +476,15 @@ export function openAIChatStreamToAnthropicSSE(
             });
           }
 
-          if (typeof delta.reasoning_content === "string" && delta.reasoning_content) {
+          const reasoningDelta = delta.reasoning_content ?? delta.reasoning;
+          if (typeof reasoningDelta === "string" && reasoningDelta) {
             if (thinkingBlockIndex === undefined) {
               thinkingBlockIndex = emitBlockStart({ type: "thinking", thinking: "" });
             }
             send("content_block_delta", {
               type: "content_block_delta",
               index: thinkingBlockIndex,
-              delta: { type: "thinking_delta", thinking: delta.reasoning_content },
+              delta: { type: "thinking_delta", thinking: reasoningDelta },
             });
           }
 

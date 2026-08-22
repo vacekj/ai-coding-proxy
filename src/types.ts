@@ -196,6 +196,9 @@ export interface OpenAIChatRequest {
   tool_choice?: OpenAIToolChoice;
   effort?: string;
   reasoning_effort?: string;
+  reasoning?: {
+    effort?: string;
+  };
 }
 
 export type OpenAIChatMessage =

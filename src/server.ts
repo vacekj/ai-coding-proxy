@@ -20,6 +20,13 @@ import {
   resolveOpenCodeModel,
   streamOpenCodeMessage,
 } from "./opencode";
+import {
+  fetchOxAlphaMessage,
+  oxAlphaModels,
+  resolveOxAlphaModel,
+  streamOxAlphaMessage,
+  type OxAlphaProvider,
+} from "./ox-alpha";
 import { estimateAnthropicInputTokens, anthropicToResponses } from "./translate";
 import { sanitizeAnthropicRequest } from "./sanitize";
 import type { AnthropicMessageRequest } from "./types";
@@ -45,6 +52,7 @@ const server = Bun.serve({
           opencode_model: defaultOpenCodeModel().id,
           opencode_zen_models: opencodeModels().filter((model) => model.plan === "zen").length,
           opencode_go_models: opencodeModels().filter((model) => model.plan === "go").length,
+          ox_alpha_models: oxAlphaModels().length,
           max_tool_result_chars: maxToolResultChars(),
           max_request_chars: maxRequestChars(),
           compacted_tool_result_chars: compactedToolResultChars(),
@@ -113,6 +121,7 @@ console.log(
     `${opencodeModels().filter((model) => model.plan === "go").length} go/*; ` +
     `default ${defaultOpenCodeModel().id}`,
 );
+console.log("Ox Alpha is available as openrouter/ox-alpha and hermes/ox-alpha.");
 
 async function handleMessages(request: Request): Promise<Response> {
   const rawBody = (await request.json()) as AnthropicMessageRequest;
@@ -125,6 +134,13 @@ async function handleMessages(request: Request): Promise<Response> {
       return sseResponse(streamOpenCodeMessage(body, { signal: request.signal }));
     }
     return respondWithMessage(fetchOpenCodeMessage(body, { signal: request.signal }));
+  }
+
+  if (route === "openrouter" || route === "hermes") {
+    if (body.stream) {
+      return sseResponse(streamOxAlphaMessage(body, route, { signal: request.signal }));
+    }
+    return respondWithMessage(fetchOxAlphaMessage(body, route, { signal: request.signal }));
   }
 
   const translation = anthropicToResponses(body);
@@ -229,7 +245,8 @@ function respondWithMessage(
 function modelsList() {
   const grokModel = modelDetails(upstreamModel());
   const opencodeModelDetails = opencodeModels().map((model) => modelDetails(model.id));
-  const data = [grokModel, ...opencodeModelDetails];
+  const oxAlphaModelDetails = oxAlphaModels().map((model) => modelDetails(model.id));
+  const data = [grokModel, ...opencodeModelDetails, ...oxAlphaModelDetails];
   return {
     data,
     has_more: false,
@@ -239,6 +256,23 @@ function modelsList() {
 }
 
 function modelDetails(id: string) {
+  const oxAlpha = resolveOxAlphaModel(id);
+  if (oxAlpha) {
+    return {
+      id: id || oxAlpha.id,
+      type: "model",
+      display_name: oxAlpha.displayName,
+      created_at: "2026-08-20T00:00:00Z",
+      context_window: oxAlpha.contextWindow,
+      contextWindow: oxAlpha.contextWindow,
+      max_input_tokens: oxAlpha.contextWindow,
+      maxInputTokens: oxAlpha.contextWindow,
+      input_token_limit: oxAlpha.contextWindow,
+      max_output_tokens: oxAlpha.maxOutputTokens,
+      maxOutputTokens: oxAlpha.maxOutputTokens,
+    };
+  }
+
   const opencode = resolveOpenCodeModel(id);
   if (opencode) {
     return {
@@ -264,11 +298,15 @@ function modelDetails(id: string) {
   };
 }
 
-function routeProvider(model: string | undefined): "opencode" | "grok" {
+function routeProvider(model: string | undefined): "opencode" | "grok" | OxAlphaProvider {
+  const oxAlpha = resolveOxAlphaModel(model);
+  if (oxAlpha) return oxAlpha.provider;
   if (model && isOpenCodeModel(model)) return "opencode";
 
   const provider = process.env.PROXY_PROVIDER?.toLowerCase();
   if (provider === "opencode") return "opencode";
+  if (provider === "openrouter") return "openrouter";
+  if (provider === "hermes" || provider === "nous") return "hermes";
   return "grok";
 }
 

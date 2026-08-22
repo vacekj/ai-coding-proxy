@@ -180,6 +180,103 @@ describe("live OpenCode Zen proxy", () => {
   }, TEST_TIMEOUT_MS);
 });
 
+/**
+ * Both gateways serve the same upstream `stealth/ox-alpha` preview, so each one is
+ * checked separately: a gateway can rate-limit or drop the free tier on its own.
+ * Echo nonces avoid an `ox-` prefix, which the model refuses as a rival model identifier.
+ */
+describe("live Ox Alpha proxy", () => {
+  /** The free preview queues requests, so it needs a longer budget than the paid upstreams. */
+  const OX_TIMEOUT_MS = 300_000;
+  const gateways = [
+    { model: "openrouter/ox-alpha", credential: "OPENROUTER_API_KEY" },
+    { model: "hermes/ox-alpha", credential: "NOUS_API_KEY" },
+  ] as const;
+
+  for (const { model, credential } of gateways) {
+    const configured = Boolean(process.env[credential]?.trim());
+
+    it.skipIf(!configured)(
+      `handles a real ${model} text response`,
+      async () => {
+        const expected = `probe-${crypto.randomUUID().slice(0, 8)}`;
+        const response = await proxyMessages({
+          model,
+          max_tokens: 512,
+          messages: [{ role: "user", content: `Reply exactly: ${expected}` }],
+        });
+
+        expect(anthropicText(response.content ?? []).trim()).toBe(expected);
+      },
+      OX_TIMEOUT_MS,
+    );
+
+    // Ox Alpha cannot disable reasoning, so the effort mapping is what breaks first.
+    it.skipIf(!configured)(
+      `accepts real ${model} reasoning at both effort extremes`,
+      async () => {
+        for (const thinking of [
+          { type: "disabled" as const },
+          { type: "enabled" as const, budget_tokens: 32_000 },
+        ]) {
+          const expected = `probe-${crypto.randomUUID().slice(0, 4)}`;
+          const response = await proxyMessages({
+            model,
+            max_tokens: 4_096,
+            thinking,
+            messages: [{ role: "user", content: `Reply exactly: ${expected}` }],
+          });
+
+          expect(anthropicText(response.content ?? []).trim()).toBe(expected);
+        }
+      },
+      OX_TIMEOUT_MS,
+    );
+
+    it.skipIf(!configured)(
+      `translates a real ${model} tool call and handles a real tool_result round trip`,
+      async () => {
+        const first = await proxyMessages({
+          model,
+          max_tokens: 2_048,
+          tool_choice: { type: "tool", name: "Bash" },
+          tools: [bashAnthropicTool()],
+          messages: [{ role: "user", content: "Use the Bash tool to run pwd." }],
+        });
+
+        const toolUse = anthropicToolUses(first.content ?? [])[0];
+        expect(toolUse?.name).toBe("Bash");
+        expect(String(toolUse?.input?.command)).toContain("pwd");
+
+        const pwdOutput = await runRealPwd();
+        const expected = `probe-${crypto.randomUUID().slice(0, 4)}`;
+        const second = await proxyMessages({
+          model,
+          max_tokens: 2_048,
+          tool_choice: { type: "none" },
+          tools: [bashAnthropicTool()],
+          messages: [
+            {
+              role: "user",
+              content: `Use the Bash tool to run pwd, then after the result reply exactly: ${expected}`,
+            },
+            { role: "assistant", content: first.content ?? [toolUse] },
+            {
+              role: "user",
+              content: [{ type: "tool_result", tool_use_id: toolUse.id, content: pwdOutput }],
+            },
+            { role: "user", content: `The tool result is above. Reply exactly: ${expected}` },
+          ],
+        });
+
+        expect(anthropicToolUses(second.content ?? [])).toHaveLength(0);
+        expect(anthropicText(second.content ?? []).trim()).toBe(expected);
+      },
+      OX_TIMEOUT_MS,
+    );
+  }
+});
+
 async function directXAIResponses(body: Record<string, unknown>): Promise<XAIResponse> {
   const sessionId = makeSessionId();
   const response = await fetch(`${grokApiBaseUrl()}/responses`, {

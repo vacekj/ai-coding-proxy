@@ -12,6 +12,9 @@ const envKeys = [
   "PORT",
   "GROK_CLI_AUTH_FILE",
   "OPENCODE_AUTH_FILE",
+  "OPENROUTER_API_KEY",
+  "NOUS_API_KEY",
+  "NOUS_OPENAI_BASE_URL",
   "PROXY_MAX_TOOL_RESULT_CHARS",
   "PROXY_MAX_REQUEST_CHARS",
 ] as const;
@@ -29,6 +32,9 @@ beforeAll(async () => {
   process.env.PORT = String(19_000 + (process.pid % 500));
   process.env.PROXY_MAX_TOOL_RESULT_CHARS = "100";
   process.env.PROXY_MAX_REQUEST_CHARS = "2000";
+  process.env.OPENROUTER_API_KEY = "test-openrouter-key";
+  process.env.NOUS_API_KEY = "test-nous-key";
+  process.env.NOUS_OPENAI_BASE_URL = "https://nous.test/v1/chat/completions";
 
   authFilePath = `/tmp/ai-coding-proxy-integration-auth-${crypto.randomUUID()}.json`;
   process.env.GROK_CLI_AUTH_FILE = authFilePath;
@@ -84,6 +90,7 @@ describe("server health and model listing", () => {
     const body = (await response.json()) as Record<string, unknown>;
     expect(body.ok).toBe(true);
     expect(body.default_provider).toBe("grok");
+    expect(body.ox_alpha_models).toBe(2);
   });
 
   it("lists grok and opencode models with context limits", async () => {
@@ -95,9 +102,14 @@ describe("server health and model listing", () => {
     const ids = body.data.map((model) => model.id);
     expect(ids).toContain("grok-composer-2.5-fast");
     expect(ids).toContain("zen/mimo-v2.5-free");
+    expect(ids).toContain("openrouter/ox-alpha");
+    expect(ids).toContain("hermes/ox-alpha");
     const detail = body.data.find((model) => model.id === "zen/x-preview-f-free")!;
     expect(detail.context_window).toBe(1_000_000);
     expect(detail.max_output_tokens).toBe(131_072);
+    const ox = body.data.find((model) => model.id === "openrouter/ox-alpha")!;
+    expect(ox.context_window).toBe(1_048_576);
+    expect(ox.max_output_tokens).toBe(131_072);
   });
 
   it("returns 404 for unknown routes", async () => {
@@ -294,6 +306,126 @@ describe("grok route", () => {
     } finally {
       delete process.env.PROXY_STREAM_PING_MS;
     }
+  });
+});
+
+describe("Ox Alpha routes", () => {
+  it("routes OpenRouter with its API key and Ox Alpha reasoning contract", async () => {
+    let captured: { url: string; headers: Headers; body: Record<string, unknown> } | undefined;
+    upstreamHandler = (url, init) => {
+      captured = {
+        url,
+        headers: new Headers(init?.headers),
+        body: JSON.parse(String(init?.body)) as Record<string, unknown>,
+      };
+      return Response.json({
+        id: "chatcmpl_ox",
+        choices: [
+          {
+            finish_reason: "stop",
+            message: { role: "assistant", reasoning: "checked", content: "openrouter works" },
+          },
+        ],
+        usage: { prompt_tokens: 4, completion_tokens: 3 },
+      });
+    };
+
+    const response = await fetch(`${baseUrl}/v1/messages`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        model: "openrouter/ox-alpha",
+        max_tokens: 64,
+        output_config: { effort: "xhigh" },
+        messages: [{ role: "user", content: "hi" }],
+      }),
+    });
+
+    expect(response.status).toBe(200);
+    expect(captured?.url).toBe("https://openrouter.ai/api/v1/chat/completions");
+    expect(captured?.headers.get("authorization")).toBe("Bearer test-openrouter-key");
+    expect(captured?.body.model).toBe("stealth/ox-alpha");
+    expect(captured?.body.reasoning).toEqual({ effort: "max" });
+    expect(captured?.body.effort).toBeUndefined();
+
+    const message = (await response.json()) as { model: string; content: Array<Record<string, unknown>> };
+    expect(message.model).toBe("openrouter/ox-alpha");
+    expect(message.content).toEqual([
+      { type: "thinking", thinking: "checked" },
+      { type: "text", text: "openrouter works" },
+    ]);
+  });
+
+  it("routes Hermes to the Nous Portal API with its key", async () => {
+    let captured: { url: string; headers: Headers; body: Record<string, unknown> } | undefined;
+    upstreamHandler = (url, init) => {
+      captured = {
+        url,
+        headers: new Headers(init?.headers),
+        body: JSON.parse(String(init?.body)) as Record<string, unknown>,
+      };
+      return Response.json({
+        id: "chatcmpl_hermes_ox",
+        choices: [{ finish_reason: "stop", message: { role: "assistant", content: "portal works" } }],
+        usage: { prompt_tokens: 4, completion_tokens: 2 },
+      });
+    };
+
+    const response = await fetch(`${baseUrl}/v1/messages`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        model: "hermes/stealth/ox-alpha",
+        max_tokens: 64,
+        messages: [{ role: "user", content: "hi" }],
+      }),
+    });
+
+    expect(response.status).toBe(200);
+    expect(captured?.url).toBe("https://nous.test/v1/chat/completions");
+    expect(captured?.headers.get("authorization")).toBe("Bearer test-nous-key");
+    expect(captured?.body.model).toBe("stealth/ox-alpha");
+  });
+
+  it("translates OpenRouter reasoning stream deltas", async () => {
+    upstreamHandler = () =>
+      sseResponse(
+        [
+          { delta: { role: "assistant", reasoning: "considering" } },
+          { delta: { content: "done" } },
+        ]
+          .map(
+            (chunk) =>
+              `data: ${JSON.stringify({
+                id: "chatcmpl_ox_stream",
+                choices: [{ index: 0, ...chunk, finish_reason: null }],
+              })}\n\n`,
+          )
+          .join("") +
+          `data: ${JSON.stringify({
+            id: "chatcmpl_ox_stream",
+            choices: [{ index: 0, delta: {}, finish_reason: "stop" }],
+          })}\n\n` +
+          "data: [DONE]\n\n",
+      );
+
+    const response = await fetch(`${baseUrl}/v1/messages`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        model: "openrouter/ox-alpha",
+        max_tokens: 64,
+        stream: true,
+        messages: [{ role: "user", content: "hi" }],
+      }),
+    });
+
+    const events = await collectEvents(response);
+    const deltas = events
+      .filter((event) => event.event === "content_block_delta")
+      .map((event) => (event.parsed as { delta: Record<string, unknown> }).delta);
+    expect(deltas).toContainEqual({ type: "thinking_delta", thinking: "considering" });
+    expect(deltas).toContainEqual({ type: "text_delta", text: "done" });
   });
 });
 

@@ -7,6 +7,8 @@ export const OPENCODE_ZEN_OPENAI_BASE_URL = "https://opencode.ai/zen/v1/chat/com
 export const OPENCODE_ZEN_ANTHROPIC_BASE_URL = "https://opencode.ai/zen/v1/messages";
 export const OPENCODE_GO_OPENAI_BASE_URL = "https://opencode.ai/zen/go/v1/chat/completions";
 export const OPENCODE_GO_ANTHROPIC_BASE_URL = "https://opencode.ai/zen/go/v1/messages";
+export const OPENROUTER_OPENAI_BASE_URL = "https://openrouter.ai/api/v1/chat/completions";
+export const NOUS_OPENAI_BASE_URL = "https://inference-api.nousresearch.com/v1/chat/completions";
 export const GROK_CLI_CLIENT_VERSION = "0.2.16";
 
 export function expandHome(path: string): string {
@@ -52,6 +54,25 @@ export function opencodeGoOpenAIBaseUrl(): string {
 
 export function opencodeGoAnthropicBaseUrl(): string {
   return (process.env.OPENCODE_GO_ANTHROPIC_BASE_URL ?? OPENCODE_GO_ANTHROPIC_BASE_URL).replace(/\/+$/, "");
+}
+
+export function openRouterApiKey(): string | undefined {
+  return process.env.OPENROUTER_API_KEY?.trim() || undefined;
+}
+
+export function openRouterOpenAIBaseUrl(): string {
+  return (process.env.OPENROUTER_OPENAI_BASE_URL ?? OPENROUTER_OPENAI_BASE_URL).replace(
+    /\/+$/,
+    "",
+  );
+}
+
+export function nousApiKey(): string | undefined {
+  return process.env.NOUS_API_KEY?.trim() || undefined;
+}
+
+export function nousOpenAIBaseUrl(): string {
+  return (process.env.NOUS_OPENAI_BASE_URL ?? NOUS_OPENAI_BASE_URL).replace(/\/+$/, "");
 }
 
 export function grokApiBaseUrl(): string {
