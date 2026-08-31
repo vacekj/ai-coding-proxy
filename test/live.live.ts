@@ -181,16 +181,14 @@ describe("live OpenCode Zen proxy", () => {
 });
 
 /**
- * Both gateways serve the same upstream `stealth/ox-alpha` preview, so each one is
- * checked separately: a gateway can rate-limit or drop the free tier on its own.
- * Echo nonces avoid an `ox-` prefix, which the model refuses as a rival model identifier.
+ * OpenRouter and Nous Portal both serve `z-ai/glm-5.3-flash`, so each gateway is
+ * checked separately: a gateway can rate-limit on its own.
  */
-describe("live Ox Alpha proxy", () => {
-  /** The free preview queues requests, so it needs a longer budget than the paid upstreams. */
-  const OX_TIMEOUT_MS = 300_000;
+describe("live GLM-5.3-Flash proxy", () => {
+  const GLM_TIMEOUT_MS = 300_000;
   const gateways = [
-    { model: "openrouter/ox-alpha", credential: "OPENROUTER_API_KEY" },
-    { model: "hermes/ox-alpha", credential: "NOUS_API_KEY" },
+    { model: "openrouter/glm-5.3-flash", credential: "OPENROUTER_API_KEY" },
+    { model: "hermes/glm-5.3-flash", credential: "NOUS_API_KEY" },
   ] as const;
 
   for (const { model, credential } of gateways) {
@@ -208,10 +206,10 @@ describe("live Ox Alpha proxy", () => {
 
         expect(anthropicText(response.content ?? []).trim()).toBe(expected);
       },
-      OX_TIMEOUT_MS,
+      GLM_TIMEOUT_MS,
     );
 
-    // Ox Alpha cannot disable reasoning, so the effort mapping is what breaks first.
+    // GLM-5.3-Flash cannot disable reasoning, so the effort mapping is what breaks first.
     it.skipIf(!configured)(
       `accepts real ${model} reasoning at both effort extremes`,
       async () => {
@@ -230,7 +228,7 @@ describe("live Ox Alpha proxy", () => {
           expect(anthropicText(response.content ?? []).trim()).toBe(expected);
         }
       },
-      OX_TIMEOUT_MS,
+      GLM_TIMEOUT_MS,
     );
 
     it.skipIf(!configured)(
@@ -239,9 +237,10 @@ describe("live Ox Alpha proxy", () => {
         const first = await proxyMessages({
           model,
           max_tokens: 2_048,
-          tool_choice: { type: "tool", name: "Bash" },
+          // Z.AI rejects function/required tool_choice ("Tool choice must be auto").
+          tool_choice: { type: "auto" },
           tools: [bashAnthropicTool()],
-          messages: [{ role: "user", content: "Use the Bash tool to run pwd." }],
+          messages: [{ role: "user", content: "Use the Bash tool to run pwd. Do not answer without calling the tool." }],
         });
 
         const toolUse = anthropicToolUses(first.content ?? [])[0];
@@ -253,7 +252,7 @@ describe("live Ox Alpha proxy", () => {
         const second = await proxyMessages({
           model,
           max_tokens: 2_048,
-          tool_choice: { type: "none" },
+          tool_choice: { type: "auto" },
           tools: [bashAnthropicTool()],
           messages: [
             {
@@ -272,9 +271,42 @@ describe("live Ox Alpha proxy", () => {
         expect(anthropicToolUses(second.content ?? [])).toHaveLength(0);
         expect(anthropicText(second.content ?? []).trim()).toBe(expected);
       },
-      OX_TIMEOUT_MS,
+      GLM_TIMEOUT_MS,
     );
   }
+});
+
+describe("live OpenCode Go GLM-5.3-Flash", () => {
+  const goModel = "go/glm-5.3-flash";
+  const GLM_TIMEOUT_MS = 180_000;
+
+  it("handles a real go/glm-5.3-flash text response", async () => {
+    const expected = `probe-${crypto.randomUUID().slice(0, 8)}`;
+    const response = await proxyMessages({
+      model: goModel,
+      max_tokens: 512,
+      messages: [{ role: "user", content: `Reply exactly: ${expected}` }],
+    });
+
+    expect(anthropicText(response.content ?? []).trim()).toBe(expected);
+  }, GLM_TIMEOUT_MS);
+
+  it("accepts real go/glm-5.3-flash reasoning at both effort extremes", async () => {
+    for (const thinking of [
+      { type: "disabled" as const },
+      { type: "enabled" as const, budget_tokens: 32_000 },
+    ]) {
+      const expected = `probe-${crypto.randomUUID().slice(0, 4)}`;
+      const response = await proxyMessages({
+        model: goModel,
+        max_tokens: 4_096,
+        thinking,
+        messages: [{ role: "user", content: `Reply exactly: ${expected}` }],
+      });
+
+      expect(anthropicText(response.content ?? []).trim()).toBe(expected);
+    }
+  }, GLM_TIMEOUT_MS);
 });
 
 async function directXAIResponses(body: Record<string, unknown>): Promise<XAIResponse> {

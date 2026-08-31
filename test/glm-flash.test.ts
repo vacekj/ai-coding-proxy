@@ -1,9 +1,9 @@
 import { afterEach, describe, expect, it } from "bun:test";
 import {
-  fetchOxAlphaMessage,
-  oxAlphaModels,
-  resolveOxAlphaModel,
-} from "../src/ox-alpha";
+  fetchGlmFlashMessage,
+  glmFlashModels,
+  resolveGlmFlashModel,
+} from "../src/glm-flash";
 
 const originalFetch = globalThis.fetch;
 const envKeys = [
@@ -23,27 +23,31 @@ afterEach(() => {
   }
 });
 
-describe("Ox Alpha model registry", () => {
-  it("exposes one explicit route per free gateway", () => {
-    expect(oxAlphaModels().map((model) => model.id)).toEqual([
-      "openrouter/ox-alpha",
-      "hermes/ox-alpha",
+describe("GLM-5.3-Flash model registry", () => {
+  it("exposes one explicit route per gateway", () => {
+    expect(glmFlashModels().map((model) => model.id)).toEqual([
+      "openrouter/glm-5.3-flash",
+      "hermes/glm-5.3-flash",
     ]);
   });
 
-  it("accepts provider-native aliases and the Claude Code context marker", () => {
-    expect(resolveOxAlphaModel("openrouter/stealth/ox-alpha")?.id).toBe("openrouter/ox-alpha");
-    expect(resolveOxAlphaModel("nous:stealth/ox-alpha[1m]")?.id).toBe("hermes/ox-alpha");
-    expect(resolveOxAlphaModel("ox-alpha")).toBeUndefined();
+  it("accepts provider-native aliases, the old Ox Alpha ids, and the Claude Code context marker", () => {
+    expect(resolveGlmFlashModel("openrouter/z-ai/glm-5.3-flash")?.id).toBe("openrouter/glm-5.3-flash");
+    expect(resolveGlmFlashModel("openrouter/stealth/ox-alpha")?.id).toBe("openrouter/glm-5.3-flash");
+    expect(resolveGlmFlashModel("openrouter/ox-alpha")?.id).toBe("openrouter/glm-5.3-flash");
+    expect(resolveGlmFlashModel("nous:stealth/ox-alpha[1m]")?.id).toBe("hermes/glm-5.3-flash");
+    expect(resolveGlmFlashModel("hermes/glm-5.3-flash")?.id).toBe("hermes/glm-5.3-flash");
+    expect(resolveGlmFlashModel("glm-5.3-flash")).toBeUndefined();
+    expect(resolveGlmFlashModel("ox-alpha")).toBeUndefined();
   });
 });
 
-describe("Ox Alpha credentials and translation", () => {
+describe("GLM-5.3-Flash credentials and translation", () => {
   it("requires an OpenRouter API key", async () => {
     delete process.env.OPENROUTER_API_KEY;
     await expect(
-      fetchOxAlphaMessage(
-        { model: "openrouter/ox-alpha", messages: [{ role: "user", content: "hi" }] },
+      fetchGlmFlashMessage(
+        { model: "openrouter/glm-5.3-flash", messages: [{ role: "user", content: "hi" }] },
         "openrouter",
       ),
     ).rejects.toThrow("OPENROUTER_API_KEY");
@@ -52,8 +56,8 @@ describe("Ox Alpha credentials and translation", () => {
   it("requires a Nous Portal API key", async () => {
     delete process.env.NOUS_API_KEY;
     await expect(
-      fetchOxAlphaMessage(
-        { model: "hermes/ox-alpha", messages: [{ role: "user", content: "hi" }] },
+      fetchGlmFlashMessage(
+        { model: "hermes/glm-5.3-flash", messages: [{ role: "user", content: "hi" }] },
         "hermes",
       ),
     ).rejects.toThrow("NOUS_API_KEY");
@@ -65,7 +69,7 @@ describe("Ox Alpha credentials and translation", () => {
 
     const call = await capturedCall(
       {
-        model: "hermes/ox-alpha",
+        model: "hermes/glm-5.3-flash",
         max_tokens: 64,
         messages: [{ role: "user", content: "hi" }],
       },
@@ -74,6 +78,7 @@ describe("Ox Alpha credentials and translation", () => {
 
     expect(call.url).toBe("https://nous.test/v1/chat/completions");
     expect(call.headers.get("authorization")).toBe("Bearer test-nous-key");
+    expect(call.body.model).toBe("z-ai/glm-5.3-flash");
   });
 
   it("preserves reasoning across a tool-result continuation", async () => {
@@ -81,7 +86,7 @@ describe("Ox Alpha credentials and translation", () => {
 
     const call = await capturedCall(
       {
-        model: "openrouter/ox-alpha",
+        model: "openrouter/glm-5.3-flash",
         max_tokens: 64,
         output_config: { effort: "medium" },
         tools: [{ name: "Bash", input_schema: { type: "object" } }],
@@ -103,18 +108,19 @@ describe("Ox Alpha credentials and translation", () => {
       "openrouter",
     );
 
+    expect(call.body.model).toBe("z-ai/glm-5.3-flash");
     expect(call.body.reasoning).toEqual({ effort: "high" });
     const messages = call.body.messages as Array<Record<string, unknown>>;
     const assistant = messages.find((message) => message.role === "assistant")!;
     expect(assistant.reasoning_content).toBe("I should use the tool");
   });
 
-  it("maps disabled thinking to Ox Alpha's mandatory minimum effort", async () => {
+  it("maps disabled thinking to GLM-5.3-Flash's mandatory minimum effort", async () => {
     process.env.OPENROUTER_API_KEY = "test-openrouter-key";
 
     const call = await capturedCall(
       {
-        model: "openrouter/ox-alpha",
+        model: "openrouter/glm-5.3-flash",
         max_tokens: 64,
         thinking: { type: "disabled" },
         messages: [{ role: "user", content: "hi" }],
@@ -127,8 +133,8 @@ describe("Ox Alpha credentials and translation", () => {
 });
 
 async function capturedCall(
-  input: Parameters<typeof fetchOxAlphaMessage>[0],
-  provider: Parameters<typeof fetchOxAlphaMessage>[1],
+  input: Parameters<typeof fetchGlmFlashMessage>[0],
+  provider: Parameters<typeof fetchGlmFlashMessage>[1],
 ): Promise<{ url: string; headers: Headers; body: Record<string, unknown> }> {
   let captured: { url: string; headers: Headers; body: Record<string, unknown> } | undefined;
   globalThis.fetch = (async (url, init) => {
@@ -144,7 +150,7 @@ async function capturedCall(
     });
   }) as typeof fetch;
 
-  await fetchOxAlphaMessage(input, provider);
+  await fetchGlmFlashMessage(input, provider);
   if (!captured) throw new Error("No upstream call captured");
   return captured;
 }

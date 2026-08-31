@@ -90,7 +90,7 @@ describe("server health and model listing", () => {
     const body = (await response.json()) as Record<string, unknown>;
     expect(body.ok).toBe(true);
     expect(body.default_provider).toBe("grok");
-    expect(body.ox_alpha_models).toBe(2);
+    expect(body.glm_flash_models).toBe(2);
   });
 
   it("lists grok and opencode models with context limits", async () => {
@@ -102,14 +102,17 @@ describe("server health and model listing", () => {
     const ids = body.data.map((model) => model.id);
     expect(ids).toContain("grok-composer-2.5-fast");
     expect(ids).toContain("zen/mimo-v2.5-free");
-    expect(ids).toContain("openrouter/ox-alpha");
-    expect(ids).toContain("hermes/ox-alpha");
-    const detail = body.data.find((model) => model.id === "zen/x-preview-f-free")!;
-    expect(detail.context_window).toBe(1_000_000);
-    expect(detail.max_output_tokens).toBe(131_072);
-    const ox = body.data.find((model) => model.id === "openrouter/ox-alpha")!;
-    expect(ox.context_window).toBe(1_048_576);
-    expect(ox.max_output_tokens).toBe(131_072);
+    expect(ids).toContain("go/glm-5.3-flash");
+    expect(ids).toContain("openrouter/glm-5.3-flash");
+    expect(ids).toContain("hermes/glm-5.3-flash");
+    expect(ids).not.toContain("zen/x-preview-f-free");
+    expect(ids).not.toContain("go/ox-alpha-free");
+    const flash = body.data.find((model) => model.id === "go/glm-5.3-flash")!;
+    expect(flash.context_window).toBe(1_000_000);
+    expect(flash.max_output_tokens).toBe(131_072);
+    const openrouter = body.data.find((model) => model.id === "openrouter/glm-5.3-flash")!;
+    expect(openrouter.context_window).toBe(1_048_576);
+    expect(openrouter.max_output_tokens).toBe(131_072);
   });
 
   it("returns 404 for unknown routes", async () => {
@@ -309,8 +312,8 @@ describe("grok route", () => {
   });
 });
 
-describe("Ox Alpha routes", () => {
-  it("routes OpenRouter with its API key and Ox Alpha reasoning contract", async () => {
+describe("GLM-5.3-Flash routes", () => {
+  it("routes OpenRouter with its API key and GLM-5.3-Flash reasoning contract", async () => {
     let captured: { url: string; headers: Headers; body: Record<string, unknown> } | undefined;
     upstreamHandler = (url, init) => {
       captured = {
@@ -319,7 +322,7 @@ describe("Ox Alpha routes", () => {
         body: JSON.parse(String(init?.body)) as Record<string, unknown>,
       };
       return Response.json({
-        id: "chatcmpl_ox",
+        id: "chatcmpl_glm",
         choices: [
           {
             finish_reason: "stop",
@@ -334,7 +337,7 @@ describe("Ox Alpha routes", () => {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        model: "openrouter/ox-alpha",
+        model: "openrouter/glm-5.3-flash",
         max_tokens: 64,
         output_config: { effort: "xhigh" },
         messages: [{ role: "user", content: "hi" }],
@@ -344,12 +347,12 @@ describe("Ox Alpha routes", () => {
     expect(response.status).toBe(200);
     expect(captured?.url).toBe("https://openrouter.ai/api/v1/chat/completions");
     expect(captured?.headers.get("authorization")).toBe("Bearer test-openrouter-key");
-    expect(captured?.body.model).toBe("stealth/ox-alpha");
+    expect(captured?.body.model).toBe("z-ai/glm-5.3-flash");
     expect(captured?.body.reasoning).toEqual({ effort: "max" });
     expect(captured?.body.effort).toBeUndefined();
 
     const message = (await response.json()) as { model: string; content: Array<Record<string, unknown>> };
-    expect(message.model).toBe("openrouter/ox-alpha");
+    expect(message.model).toBe("openrouter/glm-5.3-flash");
     expect(message.content).toEqual([
       { type: "thinking", thinking: "checked" },
       { type: "text", text: "openrouter works" },
@@ -365,7 +368,7 @@ describe("Ox Alpha routes", () => {
         body: JSON.parse(String(init?.body)) as Record<string, unknown>,
       };
       return Response.json({
-        id: "chatcmpl_hermes_ox",
+        id: "chatcmpl_hermes_glm",
         choices: [{ finish_reason: "stop", message: { role: "assistant", content: "portal works" } }],
         usage: { prompt_tokens: 4, completion_tokens: 2 },
       });
@@ -384,7 +387,7 @@ describe("Ox Alpha routes", () => {
     expect(response.status).toBe(200);
     expect(captured?.url).toBe("https://nous.test/v1/chat/completions");
     expect(captured?.headers.get("authorization")).toBe("Bearer test-nous-key");
-    expect(captured?.body.model).toBe("stealth/ox-alpha");
+    expect(captured?.body.model).toBe("z-ai/glm-5.3-flash");
   });
 
   it("translates OpenRouter reasoning stream deltas", async () => {
@@ -413,7 +416,7 @@ describe("Ox Alpha routes", () => {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        model: "openrouter/ox-alpha",
+        model: "openrouter/glm-5.3-flash",
         max_tokens: 64,
         stream: true,
         messages: [{ role: "user", content: "hi" }],

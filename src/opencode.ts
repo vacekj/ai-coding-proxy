@@ -40,6 +40,9 @@ interface ModelSpec {
   protocol?: OpenCodeProtocol;
   /** Defaults to false. Claude Code sends screenshots, so this has to be accurate. */
   multimodal?: boolean;
+  reasoningParameter?: OpenAIChatModelConfig["reasoningParameter"];
+  supportedReasoningEfforts?: readonly string[];
+  preserveReasoning?: boolean;
 }
 
 /**
@@ -55,7 +58,6 @@ const ZEN_MODELS: ModelSpec[] = [
   { id: "muse-spark-1.2-contributor-free", context: 1_048_576, output: 131_072, multimodal: true },
   { id: "nemotron-3-ultra-free", context: 1_000_000, output: 128_000 },
   { id: "nemotron-3.5-lightning-free", context: 262_144, output: 262_144 },
-  { id: "x-preview-f-free", context: 1_000_000, output: 131_072, multimodal: true },
 ];
 
 /**
@@ -65,10 +67,19 @@ const ZEN_MODELS: ModelSpec[] = [
  */
 const GO_MODELS: ModelSpec[] = [
   { id: "deepseek-v4-flash-vision-exp", context: 1_000_000, output: 384_000, multimodal: true },
-  { id: "glm-5", context: 202_752, output: 32_768 },
-  { id: "glm-5.1", context: 202_752, output: 32_768 },
-  { id: "glm-5.2", context: 1_000_000, output: 131_072 },
-  { id: "glm-5.3", context: 1_000_000, output: 131_072 },
+  { id: "glm-5", context: 202_752, output: 32_768, reasoningParameter: "reasoning_effort" },
+  { id: "glm-5.1", context: 202_752, output: 32_768, reasoningParameter: "reasoning_effort" },
+  { id: "glm-5.2", context: 1_000_000, output: 131_072, reasoningParameter: "reasoning_effort" },
+  { id: "glm-5.3", context: 1_000_000, output: 131_072, reasoningParameter: "reasoning_effort" },
+  {
+    id: "glm-5.3-flash",
+    context: 1_000_000,
+    output: 131_072,
+    multimodal: true,
+    reasoningParameter: "reasoning_effort",
+    supportedReasoningEfforts: ["max", "high", "low"],
+    preserveReasoning: true,
+  },
   { id: "gpt-5.6-luna", context: 1_050_000, output: 128_000, multimodal: true },
   { id: "hy3", context: 256_000, output: 64_000 },
   { id: "kimi-k2.5", context: 262_144, output: 65_536, multimodal: true },
@@ -81,7 +92,6 @@ const GO_MODELS: ModelSpec[] = [
   { id: "minimax-m2.7", context: 204_800, output: 131_072, protocol: "anthropic" },
   { id: "minimax-m3", context: 1_000_000, output: 131_072, protocol: "anthropic", multimodal: true },
   { id: "muse-spark-1.2-contributor", context: 1_048_576, output: 131_072, multimodal: true },
-  { id: "ox-alpha-free", context: 1_000_000, output: 131_072, multimodal: true },
   { id: "qwen3.5-plus", context: 262_144, output: 65_536, protocol: "anthropic", multimodal: true },
   { id: "qwen3.6-plus", context: 1_000_000, output: 65_536, protocol: "anthropic", multimodal: true },
   { id: "qwen3.7-max", context: 1_000_000, output: 65_536, protocol: "anthropic" },
@@ -104,6 +114,9 @@ function toModelConfig(spec: ModelSpec, plan: OpenCodePlan): OpenCodeModelConfig
     noMultimodal: spec.multimodal !== true,
     contextWindow: spec.context,
     maxOutputTokens: spec.output,
+    reasoningParameter: spec.reasoningParameter,
+    supportedReasoningEfforts: spec.supportedReasoningEfforts,
+    preserveReasoning: spec.preserveReasoning,
   };
 }
 
@@ -128,12 +141,21 @@ function normalizeModelId(model: string): string | undefined {
   const prefixed = /^(zen|go|opencode)[/:](.+)$/i.exec(raw);
   if (prefixed) {
     const plan = prefixed[1]!.toLowerCase() === "go" ? "go" : "zen";
-    return `${plan}/${prefixed[2]!.trim()}`;
+    const id = renameRetiredOpenCodeId(prefixed[2]!.trim());
+    if (id === "glm-5.3-flash") return "go/glm-5.3-flash";
+    return `${plan}/${id}`;
   }
 
-  if (KNOWN_IDS.has(`zen/${raw}`)) return `zen/${raw}`;
-  if (KNOWN_IDS.has(`go/${raw}`)) return `go/${raw}`;
+  const id = renameRetiredOpenCodeId(raw);
+  if (KNOWN_IDS.has(`zen/${id}`)) return `zen/${id}`;
+  if (KNOWN_IDS.has(`go/${id}`)) return `go/${id}`;
   return undefined;
+}
+
+/** Ox Alpha's Zen/Go stealth ids now resolve to GLM-5.3-Flash on Go. */
+function renameRetiredOpenCodeId(id: string): string {
+  if (id === "ox-alpha-free" || id === "x-preview-f-free") return "glm-5.3-flash";
+  return id;
 }
 
 const registry: ModelRegistry<OpenCodeModelConfig> = createModelRegistry(

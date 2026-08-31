@@ -15,24 +15,27 @@ import { anySignal, postJSON } from "./passthrough";
 import { estimateAnthropicInputTokens, type AnthropicMessage } from "./translate";
 import type { AnthropicMessageRequest, OpenAIChatCompletion } from "./types";
 
-export type OxAlphaProvider = "openrouter" | "hermes";
+export type GlmFlashProvider = "openrouter" | "hermes";
 
-export interface OxAlphaModelConfig extends OpenAIChatModelConfig {
-  provider: OxAlphaProvider;
+export interface GlmFlashModelConfig extends OpenAIChatModelConfig {
+  provider: GlmFlashProvider;
   displayName: string;
   contextWindow: number;
   maxOutputTokens: number;
 }
 
-const MODEL_CONFIGS: OxAlphaModelConfig[] = [
-  oxAlphaModel("openrouter", "OpenRouter Ox Alpha"),
-  oxAlphaModel("hermes", "Nous Portal Ox Alpha"),
+const UPSTREAM_ID = "z-ai/glm-5.3-flash";
+const MODEL_SLUG = "glm-5.3-flash";
+
+const MODEL_CONFIGS: GlmFlashModelConfig[] = [
+  glmFlashModel("openrouter", "OpenRouter GLM-5.3-Flash"),
+  glmFlashModel("hermes", "Nous Portal GLM-5.3-Flash"),
 ];
 
-function oxAlphaModel(provider: OxAlphaProvider, displayName: string): OxAlphaModelConfig {
+function glmFlashModel(provider: GlmFlashProvider, displayName: string): GlmFlashModelConfig {
   return {
-    id: `${provider}/ox-alpha`,
-    upstreamId: "stealth/ox-alpha",
+    id: `${provider}/${MODEL_SLUG}`,
+    upstreamId: UPSTREAM_ID,
     provider,
     displayName,
     contextWindow: 1_048_576,
@@ -45,34 +48,35 @@ function oxAlphaModel(provider: OxAlphaProvider, displayName: string): OxAlphaMo
 
 function normalizeModelId(model: string): string | undefined {
   const raw = model.trim().replace(/\[1m\]$/i, "").trim();
-  const match = /^(openrouter|hermes|nous)[/:](?:stealth\/)?ox-alpha$/i.exec(raw);
+  const match =
+    /^(openrouter|hermes|nous)[/:](?:(?:stealth\/)?ox-alpha|(?:z-ai\/)?glm-5\.3-flash)$/i.exec(raw);
   if (!match) return undefined;
   const provider = match[1]!.toLowerCase() === "openrouter" ? "openrouter" : "hermes";
-  return `${provider}/ox-alpha`;
+  return `${provider}/${MODEL_SLUG}`;
 }
 
 const registry = createModelRegistry(MODEL_CONFIGS, normalizeModelId);
 
-export function oxAlphaModels(): OxAlphaModelConfig[] {
+export function glmFlashModels(): GlmFlashModelConfig[] {
   return registry.models();
 }
 
-export function resolveOxAlphaModel(model: string | undefined): OxAlphaModelConfig | undefined {
+export function resolveGlmFlashModel(model: string | undefined): GlmFlashModelConfig | undefined {
   return registry.resolve(model);
 }
 
-export function defaultOxAlphaModel(provider: OxAlphaProvider): OxAlphaModelConfig {
-  return registry.resolve(`${provider}/ox-alpha`)!;
+export function defaultGlmFlashModel(provider: GlmFlashProvider): GlmFlashModelConfig {
+  return registry.resolve(`${provider}/${MODEL_SLUG}`)!;
 }
 
-export async function fetchOxAlphaMessage(
+export async function fetchGlmFlashMessage(
   input: AnthropicMessageRequest,
-  provider: OxAlphaProvider,
+  provider: GlmFlashProvider,
   options: { signal?: AbortSignal } = {},
 ): Promise<AnthropicMessage> {
-  const modelConfig = resolveOxAlphaModel(input.model) ?? defaultOxAlphaModel(provider);
+  const modelConfig = resolveGlmFlashModel(input.model) ?? defaultGlmFlashModel(provider);
   const clientModel = input.model ?? modelConfig.id;
-  const upstream = await fetchOxAlphaResponse(input, modelConfig, {
+  const upstream = await fetchGlmFlashResponse(input, modelConfig, {
     signal: options.signal,
     stream: false,
   });
@@ -83,16 +87,16 @@ export async function fetchOxAlphaMessage(
   );
 }
 
-export function streamOxAlphaMessage(
+export function streamGlmFlashMessage(
   input: AnthropicMessageRequest,
-  provider: OxAlphaProvider,
+  provider: GlmFlashProvider,
   options: { signal?: AbortSignal } = {},
 ): ReadableStream<Uint8Array> {
-  const modelConfig = resolveOxAlphaModel(input.model) ?? defaultOxAlphaModel(provider);
+  const modelConfig = resolveGlmFlashModel(input.model) ?? defaultGlmFlashModel(provider);
   const clientModel = input.model ?? modelConfig.id;
   const controller = new AbortController();
   const signal = anySignal(options.signal, controller.signal);
-  const upstream = fetchOxAlphaResponse(input, modelConfig, { signal, stream: true });
+  const upstream = fetchGlmFlashResponse(input, modelConfig, { signal, stream: true });
 
   return openAIChatStreamToAnthropicSSE(
     upstream,
@@ -102,9 +106,9 @@ export function streamOxAlphaMessage(
   );
 }
 
-async function fetchOxAlphaResponse(
+async function fetchGlmFlashResponse(
   input: AnthropicMessageRequest,
-  modelConfig: OxAlphaModelConfig,
+  modelConfig: GlmFlashModelConfig,
   options: { signal?: AbortSignal; stream: boolean },
 ): Promise<Response> {
   const { url, headers, label } = upstream(modelConfig.provider);
@@ -117,7 +121,7 @@ async function fetchOxAlphaResponse(
   );
 }
 
-function upstream(provider: OxAlphaProvider): {
+function upstream(provider: GlmFlashProvider): {
   url: string;
   headers: Record<string, string>;
   label: string;
@@ -126,27 +130,27 @@ function upstream(provider: OxAlphaProvider): {
     const key = openRouterApiKey();
     if (!key) {
       throw new Error(
-        "No OPENROUTER_API_KEY configured for openrouter/ox-alpha. " +
+        "No OPENROUTER_API_KEY configured for openrouter/glm-5.3-flash. " +
           "Create a key at https://openrouter.ai/keys and export it.",
       );
     }
     return {
       url: openRouterOpenAIBaseUrl(),
       headers: { "Content-Type": "application/json", Authorization: `Bearer ${key}` },
-      label: "OpenRouter Ox Alpha",
+      label: "OpenRouter GLM-5.3-Flash",
     };
   }
 
   const key = nousApiKey();
   if (!key) {
     throw new Error(
-      "No NOUS_API_KEY configured for hermes/ox-alpha. " +
+      "No NOUS_API_KEY configured for hermes/glm-5.3-flash. " +
         "Create a key in the Nous Portal at https://portal.nousresearch.com and export it.",
     );
   }
   return {
     url: nousOpenAIBaseUrl(),
     headers: { "Content-Type": "application/json", Authorization: `Bearer ${key}` },
-    label: "Nous Portal Ox Alpha",
+    label: "Nous Portal GLM-5.3-Flash",
   };
 }

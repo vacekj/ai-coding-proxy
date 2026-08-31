@@ -21,12 +21,12 @@ import {
   streamOpenCodeMessage,
 } from "./opencode";
 import {
-  fetchOxAlphaMessage,
-  oxAlphaModels,
-  resolveOxAlphaModel,
-  streamOxAlphaMessage,
-  type OxAlphaProvider,
-} from "./ox-alpha";
+  fetchGlmFlashMessage,
+  glmFlashModels,
+  resolveGlmFlashModel,
+  streamGlmFlashMessage,
+  type GlmFlashProvider,
+} from "./glm-flash";
 import { estimateAnthropicInputTokens, anthropicToResponses } from "./translate";
 import { sanitizeAnthropicRequest } from "./sanitize";
 import type { AnthropicMessageRequest } from "./types";
@@ -52,7 +52,7 @@ const server = Bun.serve({
           opencode_model: defaultOpenCodeModel().id,
           opencode_zen_models: opencodeModels().filter((model) => model.plan === "zen").length,
           opencode_go_models: opencodeModels().filter((model) => model.plan === "go").length,
-          ox_alpha_models: oxAlphaModels().length,
+          glm_flash_models: glmFlashModels().length,
           max_tool_result_chars: maxToolResultChars(),
           max_request_chars: maxRequestChars(),
           compacted_tool_result_chars: compactedToolResultChars(),
@@ -121,7 +121,7 @@ console.log(
     `${opencodeModels().filter((model) => model.plan === "go").length} go/*; ` +
     `default ${defaultOpenCodeModel().id}`,
 );
-console.log("Ox Alpha is available as openrouter/ox-alpha and hermes/ox-alpha.");
+console.log("GLM-5.3-Flash is available as openrouter/glm-5.3-flash and hermes/glm-5.3-flash.");
 
 async function handleMessages(request: Request): Promise<Response> {
   const rawBody = (await request.json()) as AnthropicMessageRequest;
@@ -138,9 +138,9 @@ async function handleMessages(request: Request): Promise<Response> {
 
   if (route === "openrouter" || route === "hermes") {
     if (body.stream) {
-      return sseResponse(streamOxAlphaMessage(body, route, { signal: request.signal }));
+      return sseResponse(streamGlmFlashMessage(body, route, { signal: request.signal }));
     }
-    return respondWithMessage(fetchOxAlphaMessage(body, route, { signal: request.signal }));
+    return respondWithMessage(fetchGlmFlashMessage(body, route, { signal: request.signal }));
   }
 
   const translation = anthropicToResponses(body);
@@ -245,8 +245,8 @@ function respondWithMessage(
 function modelsList() {
   const grokModel = modelDetails(upstreamModel());
   const opencodeModelDetails = opencodeModels().map((model) => modelDetails(model.id));
-  const oxAlphaModelDetails = oxAlphaModels().map((model) => modelDetails(model.id));
-  const data = [grokModel, ...opencodeModelDetails, ...oxAlphaModelDetails];
+  const glmFlashModelDetails = glmFlashModels().map((model) => modelDetails(model.id));
+  const data = [grokModel, ...opencodeModelDetails, ...glmFlashModelDetails];
   return {
     data,
     has_more: false,
@@ -256,20 +256,20 @@ function modelsList() {
 }
 
 function modelDetails(id: string) {
-  const oxAlpha = resolveOxAlphaModel(id);
-  if (oxAlpha) {
+  const glmFlash = resolveGlmFlashModel(id);
+  if (glmFlash) {
     return {
-      id: id || oxAlpha.id,
+      id: id || glmFlash.id,
       type: "model",
-      display_name: oxAlpha.displayName,
-      created_at: "2026-08-20T00:00:00Z",
-      context_window: oxAlpha.contextWindow,
-      contextWindow: oxAlpha.contextWindow,
-      max_input_tokens: oxAlpha.contextWindow,
-      maxInputTokens: oxAlpha.contextWindow,
-      input_token_limit: oxAlpha.contextWindow,
-      max_output_tokens: oxAlpha.maxOutputTokens,
-      maxOutputTokens: oxAlpha.maxOutputTokens,
+      display_name: glmFlash.displayName,
+      created_at: "2026-08-26T00:00:00Z",
+      context_window: glmFlash.contextWindow,
+      contextWindow: glmFlash.contextWindow,
+      max_input_tokens: glmFlash.contextWindow,
+      maxInputTokens: glmFlash.contextWindow,
+      input_token_limit: glmFlash.contextWindow,
+      max_output_tokens: glmFlash.maxOutputTokens,
+      maxOutputTokens: glmFlash.maxOutputTokens,
     };
   }
 
@@ -298,9 +298,9 @@ function modelDetails(id: string) {
   };
 }
 
-function routeProvider(model: string | undefined): "opencode" | "grok" | OxAlphaProvider {
-  const oxAlpha = resolveOxAlphaModel(model);
-  if (oxAlpha) return oxAlpha.provider;
+function routeProvider(model: string | undefined): "opencode" | "grok" | GlmFlashProvider {
+  const glmFlash = resolveGlmFlashModel(model);
+  if (glmFlash) return glmFlash.provider;
   if (model && isOpenCodeModel(model)) return "opencode";
 
   const provider = process.env.PROXY_PROVIDER?.toLowerCase();

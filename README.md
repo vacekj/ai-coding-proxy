@@ -10,14 +10,14 @@ It supports:
 - **Grok Composer** through Grok CLI OAuth, using `grok-composer-2.5-fast`
 - **OpenCode Zen** free tier through `zen/` model IDs such as `zen/mimo-v2.5-free`
 - **OpenCode Go** subscription through `go/` model IDs such as `go/glm-5.3`
-- **Ox Alpha** through its free OpenRouter and Nous Portal previews as `openrouter/ox-alpha` and `hermes/ox-alpha`
+- **GLM-5.3-Flash** through OpenRouter and Nous Portal as `openrouter/glm-5.3-flash` and `hermes/glm-5.3-flash`
 
-The proxy does not accept API keys from local clients and does not implement its own OAuth flow. For Grok, it only reads the token created by `grok login --oauth`; for OpenCode Go, it only reads the key created by `opencode auth login`. Ox Alpha's two gateways are the exception: they take a key from the environment.
+The proxy does not accept API keys from local clients and does not implement its own OAuth flow. For Grok, it only reads the token created by `grok login --oauth`; for OpenCode Go, it only reads the key created by `opencode auth login`. GLM-5.3-Flash's OpenRouter and Nous gateways are the exception: they take a key from the environment.
 
 ## When to use this
 
-- You want to use [Claude Code](https://docs.anthropic.com/en/docs/claude-code/overview) but route to a non-Anthropic model (Grok, OpenCode, Ox Alpha) for cost or experimentation.
-- You want the free Ox Alpha preview with its 1,048,576-token context window and 131,072-token output limit.
+- You want to use [Claude Code](https://docs.anthropic.com/en/docs/claude-code/overview) but route to a non-Anthropic model (Grok, OpenCode, GLM-5.3-Flash) for cost or experimentation.
+- You want GLM-5.3-Flash with its 1,048,576-token context window and 131,072-token output limit.
 - You want OpenCode Zen's free model tier working inside Claude Code without a Zen API key.
 - You have an OpenCode Go subscription and want its models in the Claude Code model picker.
 - You want a single local endpoint that can talk to multiple backends, switching by model name.
@@ -64,18 +64,19 @@ claude
 
 That is the normal happy path.
 
-## Ox Alpha
+## GLM-5.3-Flash
 
-Ox Alpha is registered once per upstream so you can switch or recover from a provider-specific rate limit without changing protocol adapters:
+GLM-5.3-Flash (the model previously previewed as Ox Alpha) is registered once per upstream so you can switch or recover from a provider-specific rate limit without changing protocol adapters:
 
 | Model ID | Upstream | Credentials |
 | --- | --- | --- |
-| `openrouter/ox-alpha` | OpenRouter | `OPENROUTER_API_KEY` |
-| `hermes/ox-alpha` | Nous Portal | `NOUS_API_KEY` |
+| `openrouter/glm-5.3-flash` | OpenRouter | `OPENROUTER_API_KEY` |
+| `hermes/glm-5.3-flash` | Nous Portal | `NOUS_API_KEY` |
+| `go/glm-5.3-flash` | OpenCode Go | `opencode-go` key from the OpenCode CLI |
 
-Both routes call their gateway's OpenAI-compatible endpoint directly and send the upstream model ID `stealth/ox-alpha`. They preserve tool calls, screenshots, and reasoning across Claude Code turns.
+The OpenRouter and Nous routes send the upstream model ID `z-ai/glm-5.3-flash`. OpenCode Go sends `glm-5.3-flash`. They preserve tool calls, screenshots, and reasoning across Claude Code turns. The old `openrouter/ox-alpha`, `hermes/ox-alpha`, and `go/ox-alpha-free` ids still resolve.
 
-`go/ox-alpha-free` is a third path to the same model for OpenCode Go subscribers. The three ids do not collide; pick whichever gateway is not rate-limiting you.
+Reasoning cannot be disabled. The proxy maps Claude Code effort onto `low`, `high`, and `max`.
 
 ### OpenRouter
 
@@ -84,9 +85,9 @@ Create an OpenRouter key, then start Claude Code with:
 ```bash
 export OPENROUTER_API_KEY=your-openrouter-key
 export ANTHROPIC_BASE_URL=http://127.0.0.1:8317
-export ANTHROPIC_MODEL=openrouter/ox-alpha
-export ANTHROPIC_DEFAULT_SONNET_MODEL=openrouter/ox-alpha
-export ANTHROPIC_DEFAULT_OPUS_MODEL=openrouter/ox-alpha
+export ANTHROPIC_MODEL=openrouter/glm-5.3-flash
+export ANTHROPIC_DEFAULT_SONNET_MODEL=openrouter/glm-5.3-flash
+export ANTHROPIC_DEFAULT_OPUS_MODEL=openrouter/glm-5.3-flash
 export ANTHROPIC_API_KEY=not-needed
 export ANTHROPIC_AUTH_TOKEN=not-needed
 claude
@@ -94,20 +95,20 @@ claude
 
 ### Nous Portal
 
-Create a free key at [portal.nousresearch.com](https://portal.nousresearch.com), then:
+Create a key at [portal.nousresearch.com](https://portal.nousresearch.com), then:
 
 ```bash
 export NOUS_API_KEY=your-nous-key
 export ANTHROPIC_BASE_URL=http://127.0.0.1:8317
-export ANTHROPIC_MODEL=hermes/ox-alpha
-export ANTHROPIC_DEFAULT_SONNET_MODEL=hermes/ox-alpha
-export ANTHROPIC_DEFAULT_OPUS_MODEL=hermes/ox-alpha
+export ANTHROPIC_MODEL=hermes/glm-5.3-flash
+export ANTHROPIC_DEFAULT_SONNET_MODEL=hermes/glm-5.3-flash
+export ANTHROPIC_DEFAULT_OPUS_MODEL=hermes/glm-5.3-flash
 export ANTHROPIC_API_KEY=not-needed
 export ANTHROPIC_AUTH_TOKEN=not-needed
 claude
 ```
 
-The zero price is controlled by the upstream preview and can change. Check the provider catalog before relying on it for a long unattended run.
+Nous bills this model. A zero portal balance returns a credits error rather than serving it.
 
 ## OpenCode
 
@@ -115,7 +116,7 @@ OpenCode models are served from the same local server, under two prefixes:
 
 | Prefix | Catalog | Credentials |
 | --- | --- | --- |
-| `zen/` | OpenCode Zen free tier (8 models) | none |
+| `zen/` | OpenCode Zen free tier (7 models) | none |
 | `go/` | OpenCode Go subscription (23 models) | `opencode-go` key from the OpenCode CLI |
 
 Only models verified to answer a live request are registered. Paid Zen models are
@@ -189,9 +190,9 @@ The app reads environment variables directly; use your shell, direnv, or another
 | `OPENCODE_ANTHROPIC_BASE_URL` | `https://opencode.ai/zen/v1/messages` | Zen Anthropic Messages endpoint |
 | `OPENCODE_GO_OPENAI_BASE_URL` | `https://opencode.ai/zen/go/v1/chat/completions` | Go OpenAI-compatible endpoint |
 | `OPENCODE_GO_ANTHROPIC_BASE_URL` | `https://opencode.ai/zen/go/v1/messages` | Go Anthropic Messages endpoint |
-| `OPENROUTER_API_KEY` | unset | OpenRouter key for `openrouter/ox-alpha` |
+| `OPENROUTER_API_KEY` | unset | OpenRouter key for `openrouter/glm-5.3-flash` |
 | `OPENROUTER_OPENAI_BASE_URL` | `https://openrouter.ai/api/v1/chat/completions` | OpenRouter chat-completions endpoint |
-| `NOUS_API_KEY` | unset | Nous Portal key for `hermes/ox-alpha` |
+| `NOUS_API_KEY` | unset | Nous Portal key for `hermes/glm-5.3-flash` |
 | `NOUS_OPENAI_BASE_URL` | `https://inference-api.nousresearch.com/v1/chat/completions` | Nous Portal chat-completions endpoint |
 | `PROXY_PROVIDER` | unset | Route unrecognized model names to `opencode`, `openrouter`, `hermes`, or `nous` |
 | `PROXY_MAX_TOOL_RESULT_CHARS` | `24000` | Max characters kept from a single `tool_result` before head/tail truncation |
@@ -215,7 +216,7 @@ If a client or network path closes long streaming requests, increase `PROXY_IDLE
 ## Local Endpoints
 
 - `GET /health` returns current proxy settings.
-- `GET /v1/models` lists Grok, Ox Alpha, and registered OpenCode `zen/` and `go/` model IDs.
+- `GET /v1/models` lists Grok, GLM-5.3-Flash, and registered OpenCode `zen/` and `go/` model IDs.
 - `POST /v1/messages` handles Anthropic-compatible message requests.
 - `POST /anthropic/v1/messages` is an alias for clients that include the Anthropic prefix.
 - `POST /v1/messages/count_tokens` returns the proxy's rough token estimate and sanitization stats.
@@ -243,7 +244,7 @@ bun run test:live
 ## Notes
 
 - Grok credentials are separate from OpenCode credentials.
-- OpenRouter and Nous Portal each apply their own availability and rate limits to Ox Alpha.
+- OpenRouter and Nous Portal each apply their own availability and rate limits to GLM-5.3-Flash.
 - If Grok credentials are missing or expired, run `bun run login`.
 - If Go requests fail on credentials, run `opencode auth login` and choose OpenCode Go.
 - Local proxy clients are unauthenticated, so keep the default `HOST=127.0.0.1` unless you intentionally want to expose it.

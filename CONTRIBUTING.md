@@ -21,7 +21,7 @@ src/                       Proxy source (server.ts is the entry point)
   anthropic-stream.ts      Anthropic SSE stream + ping keepalive
   config.ts                Env loading and defaults
   opencode.ts              OpenCode Zen adapter (model list, shared OpenAI chat translation)
-  ox-alpha.ts              Ox Alpha adapter for the OpenRouter and Nous Portal gateways
+  glm-flash.ts             GLM-5.3-Flash adapter for the OpenRouter and Nous Portal gateways
   oauth.ts                 Grok CLI OAuth token handling
   sanitize.ts              Oversized-request compaction
   server.ts                Bun.serve entry + endpoint routing

@@ -74,6 +74,45 @@ describe("fetchOpenCodeMessage", () => {
     expect(body.effort).toBe("medium");
     expect(body.reasoning_effort).toBeUndefined();
   });
+
+  it("sends GLM-5.x reasoning_effort, never the bare effort field the Go upstream rejects", async () => {
+    const body = await openCodeRequestBody({
+      model: "go/glm-5.3",
+      max_tokens: 1024,
+      messages: [{ role: "user", content: "hi" }],
+      output_config: { effort: "medium" },
+    });
+
+    expect(body.reasoning_effort).toBe("medium");
+    expect(body.effort).toBeUndefined();
+  });
+
+  it("maps Claude thinking to GLM-5.3-Flash reasoning_effort low/high/max", async () => {
+    const disabled = await openCodeRequestBody({
+      model: "go/glm-5.3-flash",
+      max_tokens: 1024,
+      messages: [{ role: "user", content: "hi" }],
+      thinking: { type: "disabled" },
+    });
+    const medium = await openCodeRequestBody({
+      model: "go/glm-5.3-flash",
+      max_tokens: 1024,
+      messages: [{ role: "user", content: "hi" }],
+      output_config: { effort: "medium" },
+    });
+    const max = await openCodeRequestBody({
+      model: "go/glm-5.3-flash",
+      max_tokens: 1024,
+      messages: [{ role: "user", content: "hi" }],
+      output_config: { effort: "xhigh" },
+    });
+
+    expect(disabled.model).toBe("glm-5.3-flash");
+    expect(disabled.reasoning_effort).toBe("low");
+    expect(medium.reasoning_effort).toBe("high");
+    expect(max.reasoning_effort).toBe("max");
+    expect(disabled.effort).toBeUndefined();
+  });
 });
 
 describe("plan routing", () => {
@@ -126,6 +165,12 @@ describe("model id resolution", () => {
 
   it("strips the Claude Code 1M context marker", () => {
     expect(resolveOpenCodeModel("go/kimi-k3[1m]")?.id).toBe("go/kimi-k3");
+  });
+
+  it("maps retired Ox Alpha ids onto GLM-5.3-Flash", () => {
+    expect(resolveOpenCodeModel("go/ox-alpha-free")?.id).toBe("go/glm-5.3-flash");
+    expect(resolveOpenCodeModel("zen/x-preview-f-free")?.id).toBe("go/glm-5.3-flash");
+    expect(resolveOpenCodeModel("glm-5.3-flash")?.id).toBe("go/glm-5.3-flash");
   });
 
   it("ignores models it does not serve", () => {
