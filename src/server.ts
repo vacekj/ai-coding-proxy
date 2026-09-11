@@ -1,3 +1,4 @@
+import { openCodeClientSession } from "./opencode-session";
 import {
   anthropicMessageToSSEStream,
   xaiResponseToAnthropicMessage,
@@ -142,7 +143,7 @@ async function handleMessages(request: Request): Promise<Response> {
   }
 
   if (route === "opencode") {
-    const messagePromise = fetchOpenCodeMessage(body, { signal: request.signal });
+    const messagePromise = fetchOpenCodeMessage(body, { signal: request.signal, sessionId: openCodeClientSession(request.headers) });
     if (body.stream) {
       return new Response(anthropicMessageToSSEStream(messagePromise), {
         headers: {

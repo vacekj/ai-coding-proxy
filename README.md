@@ -211,3 +211,19 @@ bun run test:live
 ## Contributing
 
 See [`CONTRIBUTING.md`](./CONTRIBUTING.md).
+
+### OpenCode session routing
+
+OpenCode requests include `x-opencode-session` and the proxy's own
+`ai-coding-proxy/0.1.0` user agent, following the
+[official client contract](https://opencode.ai/docs/go/#where-can-i-use-it) and
+[OpenCode request implementation](https://github.com/anomalyco/opencode/blob/dev/packages/opencode/src/session/llm/request.ts).
+The proxy preserves `x-opencode-session`, `x-session-id`, `x-claude-session-id`,
+or `anthropic-session-id` supplied by its caller. Clients should send their
+actual stable conversation identifier.
+
+For older stateless callers, the proxy derives a stable opaque ID from the
+initial user message, so retries and continuations retain affinity. It never
+rotates the ID after an error. This is routing context, not authentication;
+provider credentials, model selection and quota handling are unchanged. No
+prompt text is put into the header.

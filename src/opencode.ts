@@ -1,3 +1,4 @@
+import { openCodeSessionId } from "./opencode-session";
 import {
   opencodeAnthropicBaseUrl,
   opencodeApiKey,
@@ -118,7 +119,7 @@ export function defaultOpenCodeModel(): OpenCodeModelConfig {
 
 export async function fetchOpenCodeMessage(
   input: AnthropicMessageRequest,
-  options: { signal?: AbortSignal } = {},
+  options: { signal?: AbortSignal; sessionId?: string | null } = {},
 ): Promise<AnthropicMessage> {
   const modelConfig = resolveOpenCodeModel(input.model) ?? defaultOpenCodeModel();
   const clientModel = input.model ?? modelConfig.id;
@@ -143,7 +144,7 @@ function upstreamModelId(model: string): string {
 async function fetchOpenCodeAnthropic(
   input: AnthropicMessageRequest,
   modelConfig: OpenCodeModelConfig,
-  options: { signal?: AbortSignal },
+  options: { signal?: AbortSignal; sessionId?: string | null },
 ): Promise<unknown> {
   const body = {
     ...input,
@@ -153,7 +154,7 @@ async function fetchOpenCodeAnthropic(
 
   const response = await fetch(opencodeAnthropicBaseUrl(), {
     method: "POST",
-    headers: opencodeHeaders("anthropic"),
+    headers: opencodeHeaders("anthropic", openCodeSessionId(input, options.sessionId)),
     body: JSON.stringify(body),
     signal: options.signal,
   });
@@ -171,11 +172,11 @@ async function fetchOpenCodeAnthropic(
 async function fetchOpenCodeOpenAI(
   input: AnthropicMessageRequest,
   modelConfig: OpenCodeModelConfig,
-  options: { signal?: AbortSignal },
+  options: { signal?: AbortSignal; sessionId?: string | null },
 ): Promise<OpenAIChatCompletion> {
   const response = await fetch(opencodeOpenAIBaseUrl(), {
     method: "POST",
-    headers: opencodeHeaders("openai"),
+    headers: opencodeHeaders("openai", openCodeSessionId(input, options.sessionId)),
     body: JSON.stringify(anthropicToOpenAI(input, modelConfig)),
     signal: options.signal,
   });
@@ -190,9 +191,11 @@ async function fetchOpenCodeOpenAI(
   return (await response.json()) as OpenAIChatCompletion;
 }
 
-function opencodeHeaders(protocol: OpenCodeProtocol): Record<string, string> {
+function opencodeHeaders(protocol: OpenCodeProtocol, sessionId: string): Record<string, string> {
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
+    "User-Agent": "ai-coding-proxy/0.1.0",
+    "x-opencode-session": sessionId,
   };
   const key = opencodeApiKey();
   if (key && protocol === "openai") headers.Authorization = `Bearer ${key}`;
