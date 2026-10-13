@@ -49,24 +49,29 @@ interface ModelSpec {
  * Zen's $0 tier. These answer without any Authorization header, which is why the
  * proxy can serve them with no credentials at all. Every paid Zen model was dropped:
  * they need a Zen credit balance that an OpenCode Go subscription does not provide.
+ * Synced 2026-09-03 from https://opencode.ai/zen/v1/models (9 free models).
  */
 const ZEN_MODELS: ModelSpec[] = [
   { id: "big-pickle", context: 200_000, output: 32_000 },
-  { id: "hy3-free", context: 190_000, output: 64_000 },
-  { id: "laguna-s-2.1-free", context: 256_000, output: 32_000 },
+  { id: "deepseek-v4-flash-free", context: 1_000_000, output: 384_000 },
+  { id: "laguna-s-2.1-free", context: 1_048_576, output: 32_768 },
+  { id: "ling-3.0-flash-fin-free", context: 262_144, output: 32_768 },
   { id: "mimo-v2.5-free", context: 200_000, output: 32_000, multimodal: true },
   { id: "muse-spark-1.2-contributor-free", context: 1_048_576, output: 131_072, multimodal: true },
+  { id: "muse-spark-1.3-contributor-free", context: 1_048_576, output: 131_072, multimodal: true },
   { id: "nemotron-3-ultra-free", context: 1_000_000, output: 128_000 },
   { id: "nemotron-3.5-lightning-free", context: 262_144, output: 262_144 },
 ];
 
 /**
  * OpenCode Go, authenticated with the `opencode-go` key from the OpenCode CLI's auth store.
- * `deepseek-v4-pro` and `deepseek-v4-flash` are omitted: they return RegionError until
- * China hosting is opted into per-workspace. `deepseek-v4-flash-vision-exp` needs no opt-in.
+ * Synced 2026-09-03 from https://opencode.ai/zen/go/v1/models (34 models).
+ * deepseek-v4-flash/pro now return successfully from Go (China opt-in no longer required).
  */
 const GO_MODELS: ModelSpec[] = [
+  { id: "deepseek-v4-flash", context: 1_000_000, output: 384_000 },
   { id: "deepseek-v4-flash-vision-exp", context: 1_000_000, output: 384_000, multimodal: true },
+  { id: "deepseek-v4-pro", context: 1_000_000, output: 384_000 },
   { id: "glm-5", context: 202_752, output: 32_768, reasoningParameter: "reasoning_effort" },
   { id: "glm-5.1", context: 202_752, output: 32_768, reasoningParameter: "reasoning_effort" },
   { id: "glm-5.2", context: 1_000_000, output: 131_072, reasoningParameter: "reasoning_effort" },
@@ -81,21 +86,30 @@ const GO_MODELS: ModelSpec[] = [
     preserveReasoning: true,
   },
   { id: "gpt-5.6-luna", context: 1_050_000, output: 128_000, multimodal: true },
+  { id: "grok-4.5", context: 500_000, output: 500_000 },
+  { id: "grok-4.6", context: 500_000, output: 500_000 },
   { id: "hy3", context: 256_000, output: 64_000 },
-  { id: "kimi-k2.5", context: 262_144, output: 65_536, multimodal: true },
-  { id: "kimi-k2.6", context: 262_144, output: 65_536, multimodal: true },
+  { id: "hy3-preview", context: 256_000, output: 64_000 },
+  { id: "hy4-preview", context: 1_024_000, output: 64_000 },
+  { id: "kimi-k2.5", context: 262_144, output: 262_144, multimodal: true },
+  { id: "kimi-k2.6", context: 262_144, output: 262_144, multimodal: true },
   { id: "kimi-k2.7-code", context: 262_144, output: 262_144, multimodal: true },
   { id: "kimi-k3", context: 1_048_576, output: 131_072, protocol: "anthropic", multimodal: true },
+  { id: "longcat-2.0", context: 1_000_000, output: 131_072 },
+  { id: "mimo-v2-omni", context: 262_144, output: 131_072, multimodal: true },
+  { id: "mimo-v2-pro", context: 1_048_576, output: 131_072 },
   { id: "mimo-v2.5", context: 1_000_000, output: 128_000, multimodal: true },
   { id: "mimo-v2.5-pro", context: 1_048_576, output: 128_000 },
   { id: "minimax-m2.5", context: 204_800, output: 65_536, protocol: "anthropic" },
   { id: "minimax-m2.7", context: 204_800, output: 131_072, protocol: "anthropic" },
   { id: "minimax-m3", context: 1_000_000, output: 131_072, protocol: "anthropic", multimodal: true },
   { id: "muse-spark-1.2-contributor", context: 1_048_576, output: 131_072, multimodal: true },
-  { id: "qwen3.5-plus", context: 262_144, output: 65_536, protocol: "anthropic", multimodal: true },
+  { id: "muse-spark-1.3-contributor", context: 1_048_576, output: 131_072, multimodal: true },
+  { id: "qwen3.5-plus", context: 1_000_000, output: 65_536, protocol: "anthropic", multimodal: true },
   { id: "qwen3.6-plus", context: 1_000_000, output: 65_536, protocol: "anthropic", multimodal: true },
   { id: "qwen3.7-max", context: 1_000_000, output: 65_536, protocol: "anthropic" },
   { id: "qwen3.7-plus", context: 1_000_000, output: 65_536, protocol: "anthropic", multimodal: true },
+  { id: "qwen3.8-flash", context: 1_000_000, output: 131_072, protocol: "anthropic", multimodal: true },
   { id: "qwen3.8-max", context: 1_000_000, output: 131_072, protocol: "anthropic", multimodal: true },
 ];
 
